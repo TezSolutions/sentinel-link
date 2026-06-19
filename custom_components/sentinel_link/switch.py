@@ -24,7 +24,6 @@ from .const import (
     CONF_SCRIPT_TYPE,
     CONF_SCRIPTS,
     DATA_COORDINATOR,
-    DATA_MQTT_LOCAL,
     DEFAULT_OFF_ARG,
     DEFAULT_ON_ARG,
     DOMAIN,
@@ -32,7 +31,6 @@ from .const import (
     SCRIPT_TYPE_SWITCH,
 )
 from .coordinator import SentinelCoordinator
-from .mqtt_local import SentinelMqttLocal
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +43,6 @@ async def async_setup_entry(
     """Set up switch entities from a config entry."""
     runtime: dict[str, Any] = hass.data[DOMAIN][entry.entry_id]
     coordinator: SentinelCoordinator = runtime[DATA_COORDINATOR]
-    mqtt_local: SentinelMqttLocal = runtime[DATA_MQTT_LOCAL]
 
     cfg: dict[str, Any] = dict(entry.data)
     cfg.update(entry.options)
@@ -59,7 +56,7 @@ async def async_setup_entry(
         if script_entry.get(CONF_SCRIPT_TYPE) != SCRIPT_TYPE_SWITCH:
             continue
         entities.append(
-            SentinelScriptSwitch(coordinator, mqtt_local, script_entry, entry.entry_id)
+            SentinelScriptSwitch(coordinator, script_entry, entry.entry_id)
         )
 
     async_add_entities(entities)
@@ -71,13 +68,11 @@ class SentinelScriptSwitch(CoordinatorEntity[SentinelCoordinator], SwitchEntity)
     def __init__(
         self,
         coordinator: SentinelCoordinator,
-        mqtt_local: SentinelMqttLocal,
         script_entry: dict[str, Any],
         entry_id: str,
     ) -> None:
         super().__init__(coordinator)
         self._script_entry = script_entry
-        self._mqtt_local = mqtt_local
         self._entry_id = entry_id
 
         self._script_id: str = script_entry[CONF_SCRIPT_ID]
@@ -136,18 +131,16 @@ class SentinelScriptSwitch(CoordinatorEntity[SentinelCoordinator], SwitchEntity)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on by running the on_arg script command."""
-        new_state = await self.coordinator.async_run_script_command(
+        await self.coordinator.async_run_script_command(
             self._script_entry, self._on_arg
         )
-        await self._mqtt_local.publish_state(self._script_id, new_state)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off by running the off_arg script command."""
-        new_state = await self.coordinator.async_run_script_command(
+        await self.coordinator.async_run_script_command(
             self._script_entry, self._off_arg
         )
-        await self._mqtt_local.publish_state(self._script_id, new_state)
         await self.coordinator.async_request_refresh()
 
     # ------------------------------------------------------------------

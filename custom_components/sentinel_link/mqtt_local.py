@@ -1,6 +1,7 @@
 """Local MQTT helpers for Sentinel Link.
 
-Uses HA's built-in MQTT integration (hass.components.mqtt) exclusively.
+Uses HA's built-in MQTT integration via the modern
+`homeassistant.components.mqtt` module API (HA 2023.8+).
 Responsible for:
   - Publishing MQTT Discovery payloads (retained) so HA creates entities
   - Publishing script state to the local state topic
@@ -13,23 +14,24 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from homeassistant.components import mqtt
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CONF_AREA,
+    CONF_MANUFACTURER,
+    CONF_MODEL,
+    CONF_SCRIPT_ID,
+    CONF_SCRIPT_NAME,
+    CONF_SCRIPT_TYPE,
     DOMAIN,
+    MANUFACTURER,
+    SCRIPT_TYPE_BUTTON,
+    SCRIPT_TYPE_SENSOR,
+    SCRIPT_TYPE_SWITCH,
     TOPIC_LOCAL_DISCOVERY,
     TOPIC_LOCAL_SET,
     TOPIC_LOCAL_STATE,
-    SCRIPT_TYPE_SWITCH,
-    SCRIPT_TYPE_BUTTON,
-    SCRIPT_TYPE_SENSOR,
-    CONF_SCRIPT_NAME,
-    CONF_SCRIPT_ID,
-    CONF_SCRIPT_TYPE,
-    CONF_MANUFACTURER,
-    CONF_MODEL,
-    CONF_AREA,
-    MANUFACTURER,
 )
 
 if TYPE_CHECKING:
@@ -73,13 +75,14 @@ class SentinelMqttLocal:
             "name": script_name,
             "manufacturer": manufacturer,
             "model": model,
-            "via_device": f"{DOMAIN}_{self._node_id}",
+            # No via_device — avoids creating a ghost unnamed MQTT parent device.
+            # Sentinel Link's native device registry entry handles grouping.
         }
 
         if script_type == SCRIPT_TYPE_SWITCH:
             component = "switch"
             payload: dict[str, Any] = {
-                "name": script_name,
+                "name": None,
                 "unique_id": unique_id,
                 "state_topic": state_topic,
                 "command_topic": command_topic,
@@ -96,7 +99,7 @@ class SentinelMqttLocal:
         elif script_type == SCRIPT_TYPE_BUTTON:
             component = "button"
             payload = {
-                "name": script_name,
+                "name": None,
                 "unique_id": unique_id,
                 "command_topic": command_topic,
                 "payload_press": "enable",
@@ -107,7 +110,7 @@ class SentinelMqttLocal:
         elif script_type == SCRIPT_TYPE_SENSOR:
             component = "sensor"
             payload = {
-                "name": script_name,
+                "name": None,
                 "unique_id": unique_id,
                 "state_topic": state_topic,
                 "retain": False,
@@ -134,7 +137,7 @@ class SentinelMqttLocal:
             script_id,
             discovery_topic,
         )
-        await self._hass.components.mqtt.async_publish(
+        await mqtt.async_publish(
             self._hass,
             discovery_topic,
             discovery_payload,
@@ -158,7 +161,7 @@ class SentinelMqttLocal:
             node_id=self._node_id,
             script_id=script_id,
         )
-        await self._hass.components.mqtt.async_publish(
+        await mqtt.async_publish(
             self._hass,
             discovery_topic,
             "",
@@ -178,7 +181,7 @@ class SentinelMqttLocal:
         topic = TOPIC_LOCAL_STATE.format(
             node_id=self._node_id, script_id=script_id
         )
-        await self._hass.components.mqtt.async_publish(
+        await mqtt.async_publish(
             self._hass,
             topic,
             state,
@@ -209,7 +212,7 @@ class SentinelMqttLocal:
             )
             await callback(script_id, payload)
 
-        unsub = await self._hass.components.mqtt.async_subscribe(
+        unsub = await mqtt.async_subscribe(
             self._hass,
             topic,
             _message_received,

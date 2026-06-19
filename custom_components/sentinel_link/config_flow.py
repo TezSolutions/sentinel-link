@@ -13,6 +13,12 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    SelectOptionDict,
+)
 
 from .const import (
     BUNDLED_VIGI_ALARM,
@@ -92,7 +98,7 @@ def _test_mqtt_connection(
 
     def on_connect(client, userdata, connect_flags, reason_code, properties):
         is_ok = reason_code == 0 or (
-            hasattr(reason_code, "is_failure") and not reason_code.is_failure()
+            hasattr(reason_code, "is_failure") and not reason_code.is_failure
         )
         if not is_ok:
             result[0] = "cannot_connect"
@@ -105,7 +111,7 @@ def _test_mqtt_connection(
         clean_session=True,
     )
     if username:
-        client.username_pw_set(username, password or None)
+        client.username_pw_set(username, password if password is not None else "")
     if use_tls:
         try:
             client.tls_set()
@@ -141,6 +147,13 @@ class SentinelLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> SentinelLinkOptionsFlow:
+        return SentinelLinkOptionsFlow(config_entry)
 
     # ------------------------------------------------------------------
     # Step 1: Local broker
@@ -236,7 +249,6 @@ class SentinelLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         if user_input is not None:
             self._data.update(user_input)
-            # Initialise empty scripts list
             self._data.setdefault(CONF_SCRIPTS, [])
             return self.async_create_entry(
                 title=f"Sentinel Link ({self._data.get(CONF_NODE_ID, 'node')})",
@@ -271,108 +283,132 @@ class SentinelLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 # ---------------------------------------------------------------------------
 
 class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
-    """Options flow: manage scripts + feature toggles."""
+    """Options flow: script manager (step 1) + feature settings (step 2)."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
-        # Working copy of options / data merged
         self._options: dict[str, Any] = dict(config_entry.data)
         self._options.update(config_entry.options)
-        # Index of the script being edited (None = new)
         self._editing_index: int | None = None
 
     # ------------------------------------------------------------------
-    # Main menu
+    # Step 1: Script manager
     # ------------------------------------------------------------------
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Show current scripts and global controls."""
+        """Script manager — add, edit, toggle, remove scripts."""
+        scripts: list[dict] = list(self._options.get(CONF_SCRIPTS, []))
+
         if user_input is not None:
-            action = user_input.get("action", "save")
+            action = user_input.get("action", "next")
+
             if action == "add_script":
                 self._editing_index = None
                 return await self.async_step_script_edit()
+
             if action.startswith("edit_"):
                 idx = int(action.split("_", 1)[1])
                 self._editing_index = idx
                 return await self.async_step_script_edit()
+
             if action.startswith("remove_"):
                 idx = int(action.split("_", 1)[1])
-                scripts: list[dict] = list(
-                    self._options.get(CONF_SCRIPTS, [])
-                )
                 scripts.pop(idx)
                 self._options[CONF_SCRIPTS] = scripts
-                return await self.async_step_init()
+                return await self.async_step_init(None)
+
             if action.startswith("toggle_"):
                 idx = int(action.split("_", 1)[1])
-                scripts = list(self._options.get(CONF_SCRIPTS, []))
                 scripts[idx][CONF_ENABLED] = not scripts[idx].get(CONF_ENABLED, True)
                 self._options[CONF_SCRIPTS] = scripts
-                return await self.async_step_init()
+                return await self.async_step_init(None)
 
-            # Save global features
+            # "next" — proceed to feature settings
+            return await self.async_step_features()
+
+        # Build action options
+        action_options: list[SelectOptionDict] = [
+            SelectOptionDict(value="next", label="Next: Feature Settings →"),
+            SelectOptionDict(value="add_script", label="+ Add New Script"),
+        ]
+        for i, s in enumerate(scripts):
+            name = s.get(CONF_SCRIPT_NAME) or s.get(CONF_SCRIPT_ID) or f"Script {i}"
+            enabled = s.get(CONF_ENABLED, True)
+            action_options.append(SelectOptionDict(value=f"edit_{i}", label=f"Edit: {name}"))
+            action_options.append(
+                SelectOptionDict(
+                    value=f"toggle_{i}",
+                    label=f"{'Disable' if enabled else 'Enable'}: {name}",
+                )
+            )
+            action_options.append(SelectOptionDict(value=f"remove_{i}", label=f"Remove: {name}"))
+
+        if scripts:
+            scripts_summary = "\n".join(
+                f"  {i+1}. {s.get(CONF_SCRIPT_NAME) or s.get(CONF_SCRIPT_ID, '?')} "
+                f"[{s.get(CONF_SCRIPT_TYPE, '?')}] "
+                f"({'enabled' if s.get(CONF_ENABLED, True) else 'disabled'})"
+                for i, s in enumerate(scripts)
+            )
+        else:
+            scripts_summary = "  No scripts configured yet."
+
+        schema = vol.Schema(
+            {
+                vol.Optional("action", default="next"): SelectSelector(
+                    SelectSelectorConfig(
+                        options=action_options,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=schema,
+            description_placeholders={"scripts_list": scripts_summary},
+        )
+
+    # ------------------------------------------------------------------
+    # Step 2: Feature settings
+    # ------------------------------------------------------------------
+
+    async def async_step_features(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Feature toggles and metric settings."""
+        if user_input is not None:
             self._options.update(
                 {
                     CONF_AVAILABILITY_BEACON: user_input.get(
-                        CONF_AVAILABILITY_BEACON,
-                        self._options.get(CONF_AVAILABILITY_BEACON, DEFAULT_AVAILABILITY_BEACON),
+                        CONF_AVAILABILITY_BEACON, DEFAULT_AVAILABILITY_BEACON
                     ),
                     CONF_SYSTEM_METRICS: user_input.get(
-                        CONF_SYSTEM_METRICS,
-                        self._options.get(CONF_SYSTEM_METRICS, DEFAULT_SYSTEM_METRICS),
+                        CONF_SYSTEM_METRICS, DEFAULT_SYSTEM_METRICS
                     ),
                     CONF_NOTIFICATION_FORWARD: user_input.get(
-                        CONF_NOTIFICATION_FORWARD,
-                        self._options.get(CONF_NOTIFICATION_FORWARD, DEFAULT_NOTIFICATION_FORWARD),
+                        CONF_NOTIFICATION_FORWARD, DEFAULT_NOTIFICATION_FORWARD
                     ),
                     CONF_SCRIPT_CONTROL: user_input.get(
-                        CONF_SCRIPT_CONTROL,
-                        self._options.get(CONF_SCRIPT_CONTROL, DEFAULT_SCRIPT_CONTROL),
+                        CONF_SCRIPT_CONTROL, DEFAULT_SCRIPT_CONTROL
                     ),
                     CONF_METRICS_INTERVAL: user_input.get(
-                        CONF_METRICS_INTERVAL,
-                        self._options.get(CONF_METRICS_INTERVAL, DEFAULT_METRICS_INTERVAL),
+                        CONF_METRICS_INTERVAL, DEFAULT_METRICS_INTERVAL
                     ),
                     CONF_DISK_MOUNTS: user_input.get(
-                        CONF_DISK_MOUNTS,
-                        self._options.get(CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS),
+                        CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS
                     ),
                 }
             )
             return self.async_create_entry(title="", data=self._options)
 
-        scripts: list[dict] = self._options.get(CONF_SCRIPTS, [])
-        # Build description with script list
-        scripts_summary = (
-            "\n".join(
-                f"{i}: {s.get(CONF_SCRIPT_NAME, s.get(CONF_SCRIPT_ID, '?'))} "
-                f"[{s.get(CONF_SCRIPT_TYPE, '?')}] "
-                f"{'✓' if s.get(CONF_ENABLED, True) else '✗'}"
-                for i, s in enumerate(scripts)
-            )
-            or "No scripts configured."
-        )
-
-        # Action choices
-        action_choices = ["save", "add_script"]
-        for i in range(len(scripts)):
-            action_choices.append(f"edit_{i}")
-            action_choices.append(f"toggle_{i}")
-            action_choices.append(f"remove_{i}")
-
         schema = vol.Schema(
             {
                 vol.Optional(
-                    "action", default="save"
-                ): vol.In(action_choices),
-                vol.Optional(
                     CONF_AVAILABILITY_BEACON,
-                    default=self._options.get(
-                        CONF_AVAILABILITY_BEACON, DEFAULT_AVAILABILITY_BEACON
-                    ),
+                    default=self._options.get(CONF_AVAILABILITY_BEACON, DEFAULT_AVAILABILITY_BEACON),
                 ): bool,
                 vol.Optional(
                     CONF_SYSTEM_METRICS,
@@ -380,9 +416,7 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                 ): bool,
                 vol.Optional(
                     CONF_NOTIFICATION_FORWARD,
-                    default=self._options.get(
-                        CONF_NOTIFICATION_FORWARD, DEFAULT_NOTIFICATION_FORWARD
-                    ),
+                    default=self._options.get(CONF_NOTIFICATION_FORWARD, DEFAULT_NOTIFICATION_FORWARD),
                 ): bool,
                 vol.Optional(
                     CONF_SCRIPT_CONTROL,
@@ -398,11 +432,7 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                 ): str,
             }
         )
-        return self.async_show_form(
-            step_id="init",
-            data_schema=schema,
-            description_placeholders={"scripts_list": scripts_summary},
-        )
+        return self.async_show_form(step_id="features", data_schema=schema)
 
     # ------------------------------------------------------------------
     # Script add / edit sub-form
@@ -414,13 +444,11 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         scripts: list[dict] = list(self._options.get(CONF_SCRIPTS, []))
 
-        # Load existing values if editing
         existing: dict[str, Any] = {}
         if self._editing_index is not None and self._editing_index < len(scripts):
             existing = scripts[self._editing_index]
 
         if user_input is not None:
-            # Basic validation
             script_id: str = user_input.get(CONF_SCRIPT_ID, "").strip()
             if not script_id:
                 errors[CONF_SCRIPT_ID] = "script_id_required"
@@ -441,9 +469,7 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                     CONF_ON_ARG: user_input.get(CONF_ON_ARG, DEFAULT_ON_ARG),
                     CONF_OFF_ARG: user_input.get(CONF_OFF_ARG, DEFAULT_OFF_ARG),
                     CONF_PARSE_RULE: user_input.get(CONF_PARSE_RULE, "exitcode"),
-                    CONF_POLL_INTERVAL: user_input.get(
-                        CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
-                    ),
+                    CONF_POLL_INTERVAL: user_input.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
                     CONF_AREA: user_input.get(CONF_AREA, ""),
                     CONF_MANUFACTURER: user_input.get(CONF_MANUFACTURER, "TezSolutions"),
                     CONF_MODEL: user_input.get(CONF_MODEL, "Sentinel Script"),
@@ -454,7 +480,7 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                 else:
                     scripts.append(entry)
                 self._options[CONF_SCRIPTS] = scripts
-                return await self.async_step_init()
+                return await self.async_step_init(None)
 
         schema = vol.Schema(
             {
@@ -469,7 +495,16 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     CONF_SCRIPT_TYPE,
                     default=existing.get(CONF_SCRIPT_TYPE, SCRIPT_TYPE_SWITCH),
-                ): vol.In(SCRIPT_TYPES),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value="switch", label="Switch (on/off toggle)"),
+                            SelectOptionDict(value="button", label="Button (one-shot trigger)"),
+                            SelectOptionDict(value="sensor", label="Sensor (read-only status)"),
+                        ],
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
                 vol.Required(
                     CONF_COMMAND,
                     default=existing.get(CONF_COMMAND, BUNDLED_VIGI_ALARM),
@@ -489,7 +524,22 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     CONF_PARSE_RULE,
                     default=existing.get(CONF_PARSE_RULE, "exitcode"),
-                ): str,
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value="exitcode", label="Exit code (0=on, non-0=off)"),
+                            SelectOptionDict(value="stdout:on", label="stdout equals 'on'"),
+                            SelectOptionDict(value="stdout:off", label="stdout equals 'off'"),
+                            SelectOptionDict(value="regex:on|off", label="regex: match on or off in output"),
+                            SelectOptionDict(
+                                value="regex:sound_alarm_enabled:\\s*(on|off)",
+                                label="regex: VIGI sound_alarm_enabled: on/off",
+                            ),
+                        ],
+                        custom_value=True,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Optional(
                     CONF_POLL_INTERVAL,
                     default=existing.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
@@ -512,19 +562,3 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
             data_schema=schema,
             errors=errors,
         )
-
-
-# ---------------------------------------------------------------------------
-# Register OptionsFlow
-# ---------------------------------------------------------------------------
-
-@config_entries.HANDLERS.register(DOMAIN)
-class _SentinelLinkConfigFlowRegistrar(SentinelLinkConfigFlow):
-    """Alias that also attaches the OptionsFlow handler."""
-
-    @staticmethod
-    @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> SentinelLinkOptionsFlow:
-        return SentinelLinkOptionsFlow(config_entry)

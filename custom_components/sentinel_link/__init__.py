@@ -92,21 +92,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     # ------------------------------------------------------------------
-    # 3. Create local MQTT helper (wraps HA built-in MQTT)
+    # 3. Local MQTT helper (kept for potential future use — no discovery)
     # ------------------------------------------------------------------
     mqtt_local = SentinelMqttLocal(hass, node_id)
-
-    # Publish MQTT Discovery for all configured scripts
-    if cfg.get(CONF_SCRIPT_CONTROL, True):
-        for script_entry in cfg.get(CONF_SCRIPTS, []):
-            try:
-                await mqtt_local.publish_discovery(script_entry)
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Sentinel Link: discovery publish failed for %s: %s",
-                    script_entry.get("script_id", "?"),
-                    exc,
-                )
 
     # ------------------------------------------------------------------
     # 4. Store runtime objects
@@ -162,7 +150,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error("Sentinel Link: run_script — unknown script_id %r", script_id)
             return
         state = await coordinator.async_run_script_command(target, action)
-        await mqtt_local.publish_state(script_id, state)
         await coordinator.async_request_refresh()
 
     async def _handle_reload(call: ServiceCall) -> None:
