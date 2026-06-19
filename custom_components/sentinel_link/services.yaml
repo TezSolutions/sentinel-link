@@ -1,0 +1,35 @@
+run_script:
+  name: Run Script
+  description: >
+    Execute a Sentinel Link script with a specific action argument.
+    The script is identified by its script_id as configured in the integration.
+  fields:
+    script_id:
+      name: Script ID
+      description: >
+        The unique identifier of the script to run (e.g. "vigi_alarm").
+        Must match a script_id configured in the Sentinel Link options.
+      required: true
+      example: "vigi_alarm"
+      selector:
+        text:
+    action:
+      name: Action
+      description: >
+        The action argument to pass to the script.
+        Typically one of: status, enable, disable.
+      required: true
+      example: "enable"
+      selector:
+        select:
+          options:
+            - "status"
+            - "enable"
+            - "disable"
+
+reload:
+  name: Reload
+  description: >
+    Reload the Sentinel Link integration without restarting Home Assistant.
+    Useful after changing configuration options.
+  fields: {}

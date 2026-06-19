@@ -1,0 +1,156 @@
+{
+  "config": {
+    "step": {
+      "local_broker": {
+        "title": "Local MQTT Broker",
+        "description": "Configure the connection to your local Mosquitto MQTT broker. This broker is used for MQTT Discovery and script command routing within Home Assistant.",
+        "data": {
+          "local_host": "Host",
+          "local_port": "Port",
+          "local_username": "Username",
+          "local_password": "Password",
+          "local_tls": "Use TLS"
+        },
+        "data_description": {
+          "local_host": "Hostname or IP address of the local MQTT broker (e.g. localhost).",
+          "local_port": "TCP port the broker listens on (default: 1883).",
+          "local_username": "MQTT username for authentication.",
+          "local_password": "MQTT password for authentication.",
+          "local_tls": "Enable TLS/SSL for the connection."
+        }
+      },
+      "cloud_broker": {
+        "title": "Cloud MQTT Broker (Flespi)",
+        "description": "Configure the connection to the Flespi cloud MQTT broker. This broker is used for heartbeat, system metrics, availability status, and notification forwarding.",
+        "data": {
+          "cloud_host": "Host",
+          "cloud_port": "Port",
+          "cloud_username": "Token / Username",
+          "cloud_password": "Password",
+          "cloud_tls": "Use TLS",
+          "node_id": "Node ID"
+        },
+        "data_description": {
+          "cloud_host": "Flespi broker hostname (default: mqtt.flespi.io).",
+          "cloud_port": "TCP port (1883 for plain, 8883 for TLS).",
+          "cloud_username": "Flespi access token used as the MQTT username.",
+          "cloud_password": "Leave blank for Flespi token-based auth.",
+          "cloud_tls": "Enable TLS/SSL encryption for the cloud connection.",
+          "node_id": "Unique identifier for this Home Assistant node (used in MQTT topic paths). Defaults to the machine hostname."
+        }
+      },
+      "features": {
+        "title": "Feature Selection",
+        "description": "Enable or disable individual Sentinel Link features.",
+        "data": {
+          "availability_beacon": "Availability Beacon",
+          "system_metrics": "System Metrics",
+          "notification_forward": "Notification Forwarding",
+          "script_control": "Script Control",
+          "metrics_interval": "Metrics Interval (seconds)",
+          "disk_mounts": "Disk Mounts to Monitor"
+        },
+        "data_description": {
+          "availability_beacon": "Publish online/offline status to the cloud broker.",
+          "system_metrics": "Periodically publish CPU, RAM and disk usage to the cloud broker.",
+          "notification_forward": "Forward Home Assistant persistent notifications to the cloud broker.",
+          "script_control": "Create HA entities (switch, sensor, button) for each registered script.",
+          "metrics_interval": "How often (in seconds) to collect and publish system metrics.",
+          "disk_mounts": "Comma-separated list of mount points to monitor (e.g. /, /mnt/data)."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the MQTT broker. Check host, port, and credentials.",
+      "timeout": "Connection attempt timed out. The broker may be unreachable.",
+      "tls_error": "TLS configuration error. Verify certificates or disable TLS.",
+      "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "Sentinel Link is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sentinel Link Options",
+        "description": "Manage scripts and feature settings. Current scripts:\n{scripts_list}",
+        "data": {
+          "action": "Action",
+          "availability_beacon": "Availability Beacon",
+          "system_metrics": "System Metrics",
+          "notification_forward": "Notification Forwarding",
+          "script_control": "Script Control",
+          "metrics_interval": "Metrics Interval (seconds)",
+          "disk_mounts": "Disk Mounts to Monitor"
+        }
+      },
+      "script_edit": {
+        "title": "Add / Edit Script",
+        "description": "Configure a script entity. The Script ID must be a unique alphanumeric slug.",
+        "data": {
+          "script_name": "Display Name",
+          "script_id": "Script ID",
+          "script_type": "Entity Type",
+          "command": "Command",
+          "status_arg": "Status Argument",
+          "on_arg": "On / Enable Argument",
+          "off_arg": "Off / Disable Argument",
+          "parse_rule": "Parse Rule",
+          "poll_interval": "Poll Interval (seconds)",
+          "area": "Area",
+          "manufacturer": "Manufacturer",
+          "model": "Model"
+        },
+        "data_description": {
+          "script_name": "Human-readable name shown in the UI.",
+          "script_id": "Unique slug (letters, numbers, underscores, hyphens only).",
+          "script_type": "The type of HA entity to create: switch, button, or sensor.",
+          "command": "Path to the script, or 'bundled:vigi_alarm' for the built-in camera script.",
+          "status_arg": "Argument passed to get the current status (e.g. 'status').",
+          "on_arg": "Argument passed to enable/activate (e.g. 'enable').",
+          "off_arg": "Argument passed to disable/deactivate (e.g. 'disable').",
+          "parse_rule": "How to interpret script output: 'exitcode', 'stdout', 'regex:<pattern>', or 'jsonpath:<path>'.",
+          "poll_interval": "How often to poll script status (seconds).",
+          "area": "Optional Home Assistant area to assign this entity to.",
+          "manufacturer": "Device manufacturer shown in device info.",
+          "model": "Device model shown in device info."
+        }
+      }
+    },
+    "error": {
+      "script_id_required": "Script ID is required.",
+      "script_id_invalid": "Script ID must contain only letters, numbers, underscores, or hyphens.",
+      "script_id_duplicate": "A script with this ID already exists."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "cpu": {
+        "name": "CPU Usage"
+      },
+      "ram": {
+        "name": "RAM Usage"
+      }
+    },
+    "binary_sensor": {
+      "cloud_connected": {
+        "name": "Cloud Connected",
+        "state": {
+          "on": "Connected",
+          "off": "Disconnected"
+        }
+      }
+    }
+  },
+  "services": {
+    "run_script": {
+      "name": "Run Script",
+      "description": "Execute a Sentinel Link script with a given action."
+    },
+    "reload": {
+      "name": "Reload",
+      "description": "Reload the Sentinel Link integration."
+    }
+  }
+}
