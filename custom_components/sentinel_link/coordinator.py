@@ -9,6 +9,7 @@ After each successful update the cloud client receives the fresh metrics.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -114,6 +115,12 @@ class SentinelCoordinator(DataUpdateCoordinator):
         except Exception:  # noqa: BLE001
             cpu = 0.0
 
+        # Uptime since last boot (in seconds)
+        try:
+            uptime = int(time.time() - psutil.boot_time())
+        except Exception:  # noqa: BLE001
+            uptime = 0
+
         try:
             mem = psutil.virtual_memory()
             ram: dict[str, Any] = {
@@ -173,7 +180,7 @@ class SentinelCoordinator(DataUpdateCoordinator):
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Sentinel Link: could not read temperatures: %s", exc)
 
-        return {"cpu": cpu, "ram": ram, "hdd": hdd, "temp": temp}
+        return {"cpu": cpu, "ram": ram, "hdd": hdd, "temp": temp, "uptime": uptime}
 
     # ------------------------------------------------------------------
     # DataUpdateCoordinator overrides
@@ -190,7 +197,7 @@ class SentinelCoordinator(DataUpdateCoordinator):
 
         # System metrics
         want_metrics: bool = self._options.get(CONF_SYSTEM_METRICS, True)
-        metrics: dict[str, Any] = {"cpu": 0.0, "ram": {}, "hdd": []}
+        metrics: dict[str, Any] = {"cpu": 0.0, "ram": {}, "hdd": [], "uptime": 0}
         if want_metrics:
             try:
                 metrics = await self.hass.async_add_executor_job(self._collect_metrics)

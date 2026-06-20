@@ -5,6 +5,7 @@ Provides:
   - SentinelCpuSensor     : CPU usage %
   - SentinelRamSensor     : RAM usage %
   - SentinelHddSensor     : Disk usage % (one per configured mount)
+  - SentinelUptimeSensor  : Uptime since last boot (seconds)
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -75,6 +76,7 @@ async def async_setup_entry(
         node_id = cfg.get("node_id", "sentinel")
         entities.append(SentinelCpuSensor(coordinator, node_id, entry.entry_id))
         entities.append(SentinelRamSensor(coordinator, node_id, entry.entry_id))
+        entities.append(SentinelUptimeSensor(coordinator, node_id, entry.entry_id))
 
         mounts_str: str = cfg.get(CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS)
         for mount in [m.strip() for m in mounts_str.split(",") if m.strip()]:
@@ -370,3 +372,40 @@ class SentinelTempSensor(_SystemSensorBase):
                     "label": self._label,
                 }
         return {"label": self._label}
+
+
+# ---------------------------------------------------------------------------
+# Uptime sensor
+# ---------------------------------------------------------------------------
+
+
+class SentinelUptimeSensor(_SystemSensorBase):
+    """Uptime sensor showing seconds since last boot."""
+
+    def __init__(
+        self, coordinator: SentinelCoordinator, node_id: str, entry_id: str
+    ) -> None:
+        super().__init__(coordinator, node_id, entry_id)
+        self.entity_description = SensorEntityDescription(
+            key="uptime",
+            name="Uptime",
+            native_unit_of_measurement=UnitOfTime.SECONDS,
+            device_class=SensorDeviceClass.DURATION,
+            state_class=SensorStateClass.MEASUREMENT,
+            icon="mdi:timer-outline",
+        )
+
+    @property
+    def unique_id(self) -> str:
+        return f"{DOMAIN}_{self._entry_id}_uptime"
+
+    @property
+    def name(self) -> str:
+        return "Sentinel Uptime"
+
+    @property
+    def native_value(self) -> int | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("uptime")
+
