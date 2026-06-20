@@ -115,12 +115,6 @@ class SentinelCoordinator(DataUpdateCoordinator):
         except Exception:  # noqa: BLE001
             cpu = 0.0
 
-        # Uptime since last boot (in seconds)
-        try:
-            uptime = int(time.time() - psutil.boot_time())
-        except Exception:  # noqa: BLE001
-            uptime = 0
-
         try:
             mem = psutil.virtual_memory()
             ram: dict[str, Any] = {
@@ -130,6 +124,15 @@ class SentinelCoordinator(DataUpdateCoordinator):
             }
         except Exception:  # noqa: BLE001
             ram = {"percent": 0.0, "used_mb": 0.0, "total_mb": 0.0}
+
+        boot_time = psutil.boot_time()
+        uptime_seconds = time.time() - boot_time
+        # Convert to human-readable format
+        days = int(uptime_seconds // 86400)
+        hours = int((uptime_seconds % 86400) // 3600)
+        minutes = int((uptime_seconds % 3600) // 60)
+        seconds = int(uptime_seconds % 60)
+        uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
 
         raw_mounts: str = self._options.get(CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS)
         mount_list = [m.strip() for m in raw_mounts.split(",") if m.strip()]
@@ -180,7 +183,7 @@ class SentinelCoordinator(DataUpdateCoordinator):
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Sentinel Link: could not read temperatures: %s", exc)
 
-        return {"cpu": cpu, "ram": ram, "hdd": hdd, "temp": temp, "uptime": uptime}
+        return {"cpu": cpu, "ram": ram, "hdd": hdd, "temp": temp, "uptime": uptime_str}
 
     # ------------------------------------------------------------------
     # DataUpdateCoordinator overrides
@@ -197,7 +200,7 @@ class SentinelCoordinator(DataUpdateCoordinator):
 
         # System metrics
         want_metrics: bool = self._options.get(CONF_SYSTEM_METRICS, True)
-        metrics: dict[str, Any] = {"cpu": 0.0, "ram": {}, "hdd": [], "uptime": 0}
+        metrics: dict[str, Any] = {"cpu": 0.0, "ram": {}, "hdd": []}
         if want_metrics:
             try:
                 metrics = await self.hass.async_add_executor_job(self._collect_metrics)

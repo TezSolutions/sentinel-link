@@ -5,7 +5,7 @@ Provides:
   - SentinelCpuSensor     : CPU usage %
   - SentinelRamSensor     : RAM usage %
   - SentinelHddSensor     : Disk usage % (one per configured mount)
-  - SentinelUptimeSensor  : Uptime since last boot (seconds)
+  - SentinelUptimeSensor  : Uptime since last boot (human-readable)
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -371,16 +371,14 @@ class SentinelTempSensor(_SystemSensorBase):
                     "critical": entry.get("critical"),
                     "label": self._label,
                 }
-        return {"label": self._label}
 
 
 # ---------------------------------------------------------------------------
 # Uptime sensor
 # ---------------------------------------------------------------------------
 
-
 class SentinelUptimeSensor(_SystemSensorBase):
-    """Uptime sensor showing seconds since last boot."""
+    """Uptime sensor — shows time since last boot in human-readable format."""
 
     def __init__(
         self, coordinator: SentinelCoordinator, node_id: str, entry_id: str
@@ -389,10 +387,7 @@ class SentinelUptimeSensor(_SystemSensorBase):
         self.entity_description = SensorEntityDescription(
             key="uptime",
             name="Uptime",
-            native_unit_of_measurement=UnitOfTime.SECONDS,
-            device_class=SensorDeviceClass.DURATION,
-            state_class=SensorStateClass.MEASUREMENT,
-            icon="mdi:timer-outline",
+            icon="mdi:clock-start",
         )
 
     @property
@@ -404,8 +399,7 @@ class SentinelUptimeSensor(_SystemSensorBase):
         return "Sentinel Uptime"
 
     @property
-    def native_value(self) -> int | None:
+    def native_value(self) -> str | None:
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("uptime")
-
