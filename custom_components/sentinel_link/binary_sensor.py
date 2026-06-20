@@ -48,6 +48,13 @@ async def async_setup_entry(
     # Register sensor so __init__.py can call set_connected()
     runtime["availability_sensor"] = sensor
 
+    # The cloud client starts before platforms are set up, so its on_connect
+    # callback fires before this sensor exists and the state is missed.
+    # Sync the current connection state now to close that race window.
+    cloud_client = runtime.get(DATA_CLOUD_CLIENT)
+    if cloud_client is not None and cloud_client.is_connected:
+        sensor._connected = True  # noqa: SLF001
+
     async_add_entities([sensor])
 
 
