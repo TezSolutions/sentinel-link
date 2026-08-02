@@ -153,23 +153,35 @@ class SentinelCoordinator(DataUpdateCoordinator):
                     "Sentinel Link: could not read disk usage for %s: %s", mount, exc
                 )
 
-        # Temperature sensors — collect cpu_package, nvme, acpitz
+        # Temperature sensors — architecture-flexible collection.
+        # Different platforms expose different psutil thermal keys:
+        #   x86 Intel : coretemp (CPU package), nvme, acpitz (ACPI ambient)
+        #   RPi 4/5   : cpu_thermal (SoC), rp1_adc (RP1 southbridge, RPi5)
+        #   aarch64   : soc_thermal / gpu_thermal (RK, Jetson, etc.)
+        # Keys not present on the host are skipped; unknown keys fall back
+        # to the generic handler at the end so nothing is silently dropped.
         temp: list[dict[str, Any]] = []
         try:
             all_temps = psutil.sensors_temperatures()
-            # Priority map: sensor_key → friendly label to publish
-            wanted = {
-                "coretemp": "cpu",     # Package id 0 = overall CPU die temp
-                "nvme":     "nvme",    # NVMe SSD composite temp
-                "acpitz":   "ambient", # ACPI ambient / motherboard
+
+            # sensor_key → (friendly label, preferred entry match substring)
+            wanted: dict[str, tuple[str, str]] = {
+                "coretemp":    ("cpu",     "package"),  # x86 CPU die (Package id 0)
+                "cpu_thermal": ("cpu",     ""),         # Raspberry Pi SoC
+                "soc_thermal": ("cpu",     ""),         # generic aarch64 SoC
+                "nvme":        ("nvme",    ""),         # NVMe SSD composite
+                "acpitz":      ("ambient", ""),         # ACPI ambient / motherboard
+                "rp1_adc":     ("rp1",     ""),         # RPi5 RP1 southbridge
+                "gpu_thermal": ("gpu",     ""),         # aarch64 GPU zone
             }
-            for sensor_key, label in wanted.items():
-                entries = all_temps.get(sensor_key, [])
-                if not entries:
-                    continue
-                # For coretemp pick "Package id 0" first, fall back to first entry
+
+            seen_labels: set[str] = set()
+
+            def _add(entries: list[Any], label: str, match: str) -> None:
+                if not entries or label in seen_labels:
+                    return
                 entry = next(
-                    (e for e in entries if "package" in (e.label or "").lower()),
+                    (e for e in entries if match and match in (e.label or "").lower()),
                     entries[0],
                 )
                 temp.append(
@@ -180,6 +192,32 @@ class SentinelCoordinator(DataUpdateCoordinator):
                         "critical": round(entry.critical, 1) if entry.critical else None,
                     }
                 )
+                seen_labels.add(label)
+
+            for sensor_key, (label, match) in wanted.items():
+                _add(all_temps.get(sensor_key, []), label, match)
+
+            # Generic fallback: publish any remaining thermal zones under
+            # their raw sensor key so new/arch-specific hardware still shows up.
+            for sensor_key, entries in all_temps.items():
+                if sensor_key in wanted:
+                    continue
+                for idx, entry in enumerate(entries):
+                    raw = (entry.label or "").strip().lower().replace(" ", "_")
+                    if not raw:
+                        raw = sensor_key if len(entries) == 1 else f"{sensor_key}_{idx}"
+                    label = raw
+                    if label in seen_labels:
+                        continue
+                    temp.append(
+                        {
+                            "label": label,
+                            "current": round(entry.current, 1),
+                            "high": round(entry.high, 1) if entry.high else None,
+                            "critical": round(entry.critical, 1) if entry.critical else None,
+                        }
+                    )
+                    seen_labels.add(label)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Sentinel Link: could not read temperatures: %s", exc)
 

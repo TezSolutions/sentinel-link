@@ -41,6 +41,7 @@ from .const import (
     DOMAIN,
     MANUFACTURER,
     SCRIPT_TYPE_SENSOR,
+    TEMP_SENSOR_LABELS,
 )
 from .coordinator import SentinelCoordinator
 
@@ -83,9 +84,10 @@ async def async_setup_entry(
             entities.append(
                 SentinelHddSensor(coordinator, node_id, mount, entry.entry_id)
             )
-        # Temperature sensors — one entity per discovered sensor (cpu, nvme, ambient)
-        # We pre-register the three expected labels; entities that have no data stay unknown
-        for label in ("cpu", "nvme", "ambient"):
+        # Temperature sensors — one entity per known thermal label. Labels cover
+        # x86 (cpu/nvme/ambient) and aarch64/RPi (rp1/gpu) platforms; entities
+        # whose label never appears in coordinator data simply stay unknown.
+        for label in TEMP_SENSOR_LABELS:
             entities.append(
                 SentinelTempSensor(coordinator, node_id, label, entry.entry_id)
             )
@@ -320,12 +322,18 @@ class SentinelHddSensor(_SystemSensorBase):
 # ---------------------------------------------------------------------------
 
 class SentinelTempSensor(_SystemSensorBase):
-    """Temperature sensor entity for one thermal sensor (cpu / nvme / ambient)."""
+    """Temperature sensor entity for one thermal zone label.
+
+    Labels: cpu / nvme / ambient (x86), rp1 / gpu (aarch64, RPi). Any label
+    outside _LABEL_META falls back to a generic thermometer presentation.
+    """
 
     _LABEL_META: dict[str, tuple[str, str]] = {
         "cpu":     ("CPU Temperature",     "mdi:thermometer"),
         "nvme":    ("NVMe Temperature",    "mdi:harddisk"),
         "ambient": ("Ambient Temperature", "mdi:thermometer-lines"),
+        "rp1":     ("RP1 Temperature",     "mdi:chip"),
+        "gpu":     ("GPU Temperature",     "mdi:expansion-card"),
     }
 
     def __init__(
@@ -355,6 +363,8 @@ class SentinelTempSensor(_SystemSensorBase):
 
     @property
     def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
         temp_list: list[dict[str, Any]] = self.coordinator.data.get("temp", [])
         for entry in temp_list:
             if entry.get("label") == self._label:
@@ -363,6 +373,8 @@ class SentinelTempSensor(_SystemSensorBase):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        if self.coordinator.data is None:
+            return {}
         temp_list: list[dict[str, Any]] = self.coordinator.data.get("temp", [])
         for entry in temp_list:
             if entry.get("label") == self._label:
