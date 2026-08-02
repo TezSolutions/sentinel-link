@@ -186,9 +186,11 @@ class SentinelCoordinator(DataUpdateCoordinator):
 
             # Canonical key → (friendly label, preferred entry match substring).
             # Order matters: the first claim of a label wins, so the most
-            # critical zone for each label is listed first.
+            # critical zone for each label is listed first. NOTE: tj_thermal
+            # is NOT mapped — its hwmon driver on Jetson mis-scales trip
+            # points (reports 0.1045 instead of 104.5); cpu_thermal carries
+            # the same die temp with valid thresholds.
             wanted: dict[str, tuple[str, str]] = {
-                "tj_thermal":  ("cpu",     ""),         # junction temp (hottest die point)
                 "coretemp":    ("cpu",     "package"),  # x86 CPU die (Package id 0)
                 "cpu_thermal": ("cpu",     ""),         # RPi SoC / Jetson CPU
                 "soc_thermal": ("cpu",     ""),         # generic aarch64 SoC
@@ -201,6 +203,17 @@ class SentinelCoordinator(DataUpdateCoordinator):
 
             seen_labels: set[str] = set()
 
+            def _sane(value: float | None) -> float | None:
+                """Round a threshold, dropping garbage values.
+
+                Some hwmon drivers (Jetson tj_thermal) mis-scale trip points
+                (0.1045 instead of 104.5). A threshold at/below ~1°C is never
+                a real thermal limit, so treat it as absent.
+                """
+                if value is None or value <= 1.0:
+                    return None
+                return round(value, 1)
+
             def _add(entries: list[Any], label: str, match: str) -> None:
                 if not entries or label in seen_labels:
                     return
@@ -212,8 +225,8 @@ class SentinelCoordinator(DataUpdateCoordinator):
                     {
                         "label": label,
                         "current": round(entry.current, 1),
-                        "high": round(entry.high, 1) if entry.high else None,
-                        "critical": round(entry.critical, 1) if entry.critical else None,
+                        "high": _sane(entry.high),
+                        "critical": _sane(entry.critical),
                     }
                 )
                 seen_labels.add(label)
@@ -223,8 +236,10 @@ class SentinelCoordinator(DataUpdateCoordinator):
 
             # Generic fallback: publish any remaining thermal zones under
             # their raw sensor key so new/arch-specific hardware still shows up.
+            # tj_thermal is skipped: duplicate of cpu_thermal on Jetson with
+            # mis-scaled thresholds.
             for sensor_key, entries in all_temps.items():
-                if sensor_key in wanted:
+                if sensor_key in wanted or sensor_key == "tj_thermal":
                     continue
                 for idx, entry in enumerate(entries):
                     raw = (entry.label or "").strip().lower().replace(" ", "_").replace("-", "_")
@@ -237,8 +252,8 @@ class SentinelCoordinator(DataUpdateCoordinator):
                         {
                             "label": label,
                             "current": round(entry.current, 1),
-                            "high": round(entry.high, 1) if entry.high else None,
-                            "critical": round(entry.critical, 1) if entry.critical else None,
+                            "high": _sane(entry.high),
+                            "critical": _sane(entry.critical),
                         }
                     )
                     seen_labels.add(label)
