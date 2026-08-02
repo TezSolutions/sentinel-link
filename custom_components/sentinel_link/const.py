@@ -137,6 +137,7 @@ HEARTBEAT_INTERVAL = 60  # seconds
 MANUFACTURER = "TezSolutions"
 
 # Temperature sensor labels pre-registered as entities (one per label).
-# Covers x86 (cpu/nvme/ambient) and aarch64/RPi (rp1/gpu) platforms. Labels
-# not present on the host simply render as unknown until data appears.
-TEMP_SENSOR_LABELS = ("cpu", "nvme", "ambient", "rp1", "gpu")
+# Covers x86 (cpu/nvme/ambient), aarch64/RPi (rp1/gpu) and Jetson (cv)
+# platforms. Labels not present on the host simply render as unknown
+# until data appears.
+TEMP_SENSOR_LABELS = ("cpu", "nvme", "ambient", "rp1", "gpu", "cv")

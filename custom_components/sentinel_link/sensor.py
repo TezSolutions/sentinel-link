@@ -324,8 +324,9 @@ class SentinelHddSensor(_SystemSensorBase):
 class SentinelTempSensor(_SystemSensorBase):
     """Temperature sensor entity for one thermal zone label.
 
-    Labels: cpu / nvme / ambient (x86), rp1 / gpu (aarch64, RPi). Any label
-    outside _LABEL_META falls back to a generic thermometer presentation.
+    Labels: cpu / nvme / ambient (x86), rp1 / gpu (aarch64, RPi),
+    cv (Jetson CV accelerators). Any label outside _LABEL_META falls back
+    to a generic thermometer presentation.
     """
 
     _LABEL_META: dict[str, tuple[str, str]] = {
@@ -334,6 +335,7 @@ class SentinelTempSensor(_SystemSensorBase):
         "ambient": ("Ambient Temperature", "mdi:thermometer-lines"),
         "rp1":     ("RP1 Temperature",     "mdi:chip"),
         "gpu":     ("GPU Temperature",     "mdi:expansion-card"),
+        "cv":      ("CV Temperature",      "mdi:matrix"),
     }
 
     def __init__(

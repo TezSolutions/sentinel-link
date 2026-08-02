@@ -10,7 +10,7 @@ A Home Assistant custom integration that bridges external scripts into HA entiti
 - **Script control** — expose any shell/Python script as a HA switch, button, or sensor via a 3-verb contract (`status` / `enable` / `disable`)
 - **MQTT Discovery** — entities auto-register on the local Mosquitto broker; no HA YAML needed
 - **Cloud availability beacon** — LWT publishes `online`/`offline` to Flespi so every node is remotely observable
-- **System metrics** — CPU, RAM, HDD, and temperature published every 30s. Temperature collection is architecture-aware: x86 exposes CPU package / NVMe / ambient; Raspberry Pi exposes SoC (`cpu_thermal`) and RP1 southbridge (RPi 5); other aarch64 boards expose SoC / GPU zones. Unknown thermal zones are still published under their raw sensor names.
+- **System metrics** — CPU, RAM, HDD, and temperature published every 30s. Temperature collection is architecture-aware: x86 exposes CPU package / NVMe / ambient; Raspberry Pi exposes SoC (`cpu_thermal`) and RP1 southbridge (RPi 5); Jetson exposes junction/CPU/GPU/CV-accelerator zones; other aarch64 boards expose SoC / GPU zones. Thermal-zone key naming is normalized (dashes/underscores), multi-zone clusters collapse to their hottest reading, and unknown zones are still published under their raw sensor names.
 - **Notification forwarding** — HA notifications relayed to the cloud broker
 - **Bundled scripts** — ships with `vigi_alarm.py` (TP-Link VIGI camera sound alarm control)
 

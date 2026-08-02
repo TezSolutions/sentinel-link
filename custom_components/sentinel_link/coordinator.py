@@ -9,6 +9,7 @@ After each successful update the cloud client receives the fresh metrics.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -157,22 +158,45 @@ class SentinelCoordinator(DataUpdateCoordinator):
         # Different platforms expose different psutil thermal keys:
         #   x86 Intel : coretemp (CPU package), nvme, acpitz (ACPI ambient)
         #   RPi 4/5   : cpu_thermal (SoC), rp1_adc (RP1 southbridge, RPi5)
-        #   aarch64   : soc_thermal / gpu_thermal (RK, Jetson, etc.)
-        # Keys not present on the host are skipped; unknown keys fall back
-        # to the generic handler at the end so nothing is silently dropped.
+        #   RK aarch64: soc_thermal / gpu_thermal
+        #   Jetson    : cpu-thermal / gpu-thermal / tj-thermal / cv*-thermal
+        #               / soc*-thermal (hyphenated)
+        # Thermal-zone naming varies (dashes vs underscores), so keys are
+        # normalized before matching. Keys not present on the host are
+        # skipped; unknown keys fall back to the generic handler at the end
+        # so nothing is silently dropped.
         temp: list[dict[str, Any]] = []
         try:
-            all_temps = psutil.sensors_temperatures()
+            raw_temps = psutil.sensors_temperatures()
+            # Normalize keys: lower() + dashes→underscores so "cpu-thermal"
+            # (Jetson) and "cpu_thermal" (RPi) collapse to one canonical key.
+            # Multi-zone clusters (cv0/cv1/cv2, soc0/soc1/soc2) are folded
+            # into a single base key, keeping the hottest entry — for a
+            # health metric the peak of the cluster is what matters.
+            all_temps: dict[str, list[Any]] = {}
+            for raw_key, entries in raw_temps.items():
+                base = raw_key.strip().lower().replace("-", "_").replace(" ", "_")
+                base = re.sub(r"^(cv|soc)\d+_thermal$", r"\1_thermal", base)
+                bucket = all_temps.setdefault(base, [])
+                bucket.extend(entries)
+            # Keep only the hottest entry per bucket to avoid duplicates.
+            all_temps = {
+                k: [max(v, key=lambda e: e.current)] for k, v in all_temps.items()
+            }
 
-            # sensor_key → (friendly label, preferred entry match substring)
+            # Canonical key → (friendly label, preferred entry match substring).
+            # Order matters: the first claim of a label wins, so the most
+            # critical zone for each label is listed first.
             wanted: dict[str, tuple[str, str]] = {
+                "tj_thermal":  ("cpu",     ""),         # junction temp (hottest die point)
                 "coretemp":    ("cpu",     "package"),  # x86 CPU die (Package id 0)
-                "cpu_thermal": ("cpu",     ""),         # Raspberry Pi SoC
+                "cpu_thermal": ("cpu",     ""),         # RPi SoC / Jetson CPU
                 "soc_thermal": ("cpu",     ""),         # generic aarch64 SoC
                 "nvme":        ("nvme",    ""),         # NVMe SSD composite
                 "acpitz":      ("ambient", ""),         # ACPI ambient / motherboard
                 "rp1_adc":     ("rp1",     ""),         # RPi5 RP1 southbridge
-                "gpu_thermal": ("gpu",     ""),         # aarch64 GPU zone
+                "gpu_thermal": ("gpu",     ""),         # aarch64 / Jetson GPU
+                "cv_thermal":  ("cv",      ""),         # Jetson CV accelerator cluster
             }
 
             seen_labels: set[str] = set()
@@ -203,7 +227,7 @@ class SentinelCoordinator(DataUpdateCoordinator):
                 if sensor_key in wanted:
                     continue
                 for idx, entry in enumerate(entries):
-                    raw = (entry.label or "").strip().lower().replace(" ", "_")
+                    raw = (entry.label or "").strip().lower().replace(" ", "_").replace("-", "_")
                     if not raw:
                         raw = sensor_key if len(entries) == 1 else f"{sensor_key}_{idx}"
                     label = raw
