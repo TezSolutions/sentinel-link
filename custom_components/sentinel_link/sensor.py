@@ -455,7 +455,7 @@ class SentinelGeoipSensor(_SystemSensorBase):
 
     @property
     def name(self) -> str:
-        return "Sentinel Geolocation"
+        return "Sentinel IP Geolocation"
 
     @property
     def native_value(self) -> str | None:
