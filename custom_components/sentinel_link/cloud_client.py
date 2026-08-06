@@ -19,6 +19,7 @@ import paho.mqtt.client as mqtt
 
 from .const import (
     TOPIC_CLOUD_CPU,
+    TOPIC_CLOUD_GEOIP,
     TOPIC_CLOUD_HDD,
     TOPIC_CLOUD_HEARTBEAT,
     TOPIC_CLOUD_NOTIFY,
@@ -73,6 +74,7 @@ class SentinelCloudClient:
         self._topic_ram = TOPIC_CLOUD_RAM.format(node_id=node_id)
         self._topic_hdd = TOPIC_CLOUD_HDD.format(node_id=node_id)
         self._topic_temp = TOPIC_CLOUD_TEMP.format(node_id=node_id)
+        self._topic_geoip = TOPIC_CLOUD_GEOIP.format(node_id=node_id)
         self._topic_notify = TOPIC_CLOUD_NOTIFY.format(node_id=node_id)
 
         self._client = self._build_client()
@@ -377,6 +379,36 @@ class SentinelCloudClient:
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Sentinel Link: availability publish failed: %s", exc)
+
+    def publish_geoip(self, geoip_data: dict[str, Any]) -> None:
+        """Publish geolocation data to the cloud broker.
+
+        Published once on first boot (or integration reload).
+        """
+        if not self._connected or not geoip_data:
+            return
+        try:
+            payload = json.dumps(
+                {
+                    "ts": int(time.time()),
+                    "node_id": self._node_id,
+                    "ip": geoip_data.get("ip"),
+                    "country_code": geoip_data.get("country_code"),
+                    "country_name": geoip_data.get("country_name"),
+                    "region_name": geoip_data.get("region_name"),
+                    "city_name": geoip_data.get("city_name"),
+                    "latitude": geoip_data.get("latitude"),
+                    "longitude": geoip_data.get("longitude"),
+                    "zip_code": geoip_data.get("zip_code"),
+                    "time_zone": geoip_data.get("time_zone"),
+                    "isp": geoip_data.get("isp"),
+                    "as": geoip_data.get("as"),
+                    "asn": geoip_data.get("asn"),
+                }
+            )
+            self._client.publish(self._topic_geoip, payload=payload, qos=0, retain=True)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Sentinel Link: geoip publish failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------

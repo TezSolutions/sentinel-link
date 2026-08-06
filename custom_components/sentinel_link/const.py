@@ -102,6 +102,8 @@ BUNDLED_VIGI_ALARM = "bundled:vigi_alarm"
 TOPIC_LOCAL_STATE = "sentinel_link/{node_id}/script/{script_id}/state"
 TOPIC_LOCAL_SET = "sentinel_link/{node_id}/script/{script_id}/set"
 TOPIC_LOCAL_DISCOVERY = "homeassistant/{component}/{node_id}_{script_id}/config"
+TOPIC_LOCAL_GEOIP_DISCOVERY = "homeassistant/sensor/{node_id}_geoip/config"
+TOPIC_LOCAL_PUBLIC_IP_STATE = "sentinel_link/{node_id}/public_ip/state"
 
 # ---------------------------------------------------------------------------
 # CLOUD MQTT topic templates  (uses private paho connection to Flespi)
@@ -130,6 +132,14 @@ DATA_UNSUB_NOTIFY = "unsub_notify"
 SERVICE_RUN_SCRIPT = "run_script"
 SERVICE_RELOAD = "reload"
 
+# ---------------------------------------------------------------------------
+# GeoIP / Geolocation (ip2location.io)
+# ---------------------------------------------------------------------------
+GEOIP_API_KEY = "ACF749418433F2522ED57E7A0DFDB9DE"
+GEOIP_API_URL = "https://api.ip2location.io/"
+TOPIC_CLOUD_GEOIP = "sentinel-link/{node_id}/geoip"
+TOPIC_LOCAL_GEOIP_STATE = "sentinel_link/{node_id}/geoip/state"
+TOPIC_LOCAL_GEOIP_DISCOVERY = "homeassistant/sensor/{node_id}_geoip/config"
 # ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------

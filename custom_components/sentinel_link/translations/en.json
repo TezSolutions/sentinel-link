@@ -131,6 +131,8 @@
     "sensor": {
       "cpu": {"name": "CPU Usage"},
       "ram": {"name": "RAM Usage"},
+      "geoip": {"name": "Geolocation"},
+      "public_ip": {"name": "Public IP"},
       "cpu_temperature": {"name": "CPU Temperature"},
       "nvme_temperature": {"name": "NVMe Temperature"},
       "ambient_temperature": {"name": "Ambient Temperature"}

@@ -8,6 +8,7 @@ After each successful update the cloud client receives the fresh metrics.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import psutil
 
+from homeassistant.components import mqtt
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -35,6 +37,10 @@ from .const import (
     DEFAULT_DISK_MOUNTS,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
+    GEOIP_API_KEY,
+    GEOIP_API_URL,
+    TOPIC_LOCAL_GEOIP_STATE,
+    TOPIC_LOCAL_PUBLIC_IP_STATE,
 )
 from .script_runner import parse_status, run_script
 
@@ -55,6 +61,7 @@ class SentinelCoordinator(DataUpdateCoordinator):
     ) -> None:
         self._entry_id = entry_id
         self._options = options
+        self._node_id: str = options.get("node_id", "sentinel")
 
         poll_interval: int = options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         super().__init__(
@@ -63,6 +70,9 @@ class SentinelCoordinator(DataUpdateCoordinator):
             name=f"{DOMAIN}_{entry_id}",
             update_interval=timedelta(seconds=poll_interval),
         )
+
+        # GeoIP cache — fetched once on first boot
+        self._geoip_cache: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -263,6 +273,46 @@ class SentinelCoordinator(DataUpdateCoordinator):
         return {"cpu": cpu, "ram": ram, "hdd": hdd, "temp": temp, "uptime": uptime_str}
 
     # ------------------------------------------------------------------
+    # GeoIP / Geolocation
+    # ------------------------------------------------------------------
+
+    def _fetch_geoip_if_needed(self) -> dict[str, Any] | None:
+        """Fetch geolocation from ip2location.io once on first boot (or reload).
+
+        Called from the executor thread (blocking HTTP). Returns the cached
+        geoip dict when available, or ``None`` if the fetch hasn't completed.
+        Subsequent calls return the cached data without re-fetching.
+        """
+        # Already cached — skip
+        if self._geoip_cache is not None:
+            return self._geoip_cache
+
+        # First (and only) fetch
+        import urllib.request as _urllib_request
+
+        try:
+            url = f"{GEOIP_API_URL}?key={GEOIP_API_KEY}"
+            req = _urllib_request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; HA-Sentinel-Link/1.4)"},
+            )
+            with _urllib_request.urlopen(req, timeout=10) as resp:
+                data: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
+            self._geoip_cache = data
+            _LOGGER.info(
+                "Sentinel Link: geoip fetched — %s (%s, %s)",
+                data.get("ip", "?"),
+                data.get("country_name", "?"),
+                data.get("city_name", "?"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Sentinel Link: geoip fetch failed: %s", exc)
+            # Will retry next update tick — once only
+            self._geoip_cache = {}  # mark as attempted so we don't hammer
+
+        return self._geoip_cache
+
+    # ------------------------------------------------------------------
     # DataUpdateCoordinator overrides
     # ------------------------------------------------------------------
 
@@ -291,7 +341,59 @@ class SentinelCoordinator(DataUpdateCoordinator):
             **metrics,
         }
 
-        # Forward to cloud client (non-blocking — cloud client is thread-safe)
+        # -- GeoIP (once on boot, cached thereafter) --
+        geoip = await self.hass.async_add_executor_job(
+            self._fetch_geoip_if_needed
+        )
+        if geoip:
+            combined["geoip"] = geoip
+
+            # Publish to cloud MQTT
+            cloud = self._cloud_client
+            if cloud is not None:
+                try:
+                    cloud.publish_geoip(geoip)
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug(
+                        "Sentinel Link: cloud geoip forward failed: %s", exc
+                    )
+
+            # Publish to local MQTT (for external consumers)
+            try:
+                topic = TOPIC_LOCAL_GEOIP_STATE.format(node_id=self._node_id)
+                await mqtt.async_publish(
+                    self.hass,
+                    topic,
+                    json.dumps(geoip),
+                    qos=0,
+                    retain=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Sentinel Link: local MQTT geoip publish failed: %s", exc
+                )
+
+            # Publish public IP to local MQTT (for external consumers)
+            public_ip = geoip.get("ip")
+            if public_ip:
+                try:
+                    ip_topic = TOPIC_LOCAL_PUBLIC_IP_STATE.format(
+                        node_id=self._node_id
+                    )
+                    await mqtt.async_publish(
+                        self.hass,
+                        ip_topic,
+                        public_ip,
+                        qos=0,
+                        retain=True,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug(
+                        "Sentinel Link: local MQTT public IP publish failed: %s",
+                        exc,
+                    )
+
+        # Forward system metrics to cloud client
         cloud = self._cloud_client
         if cloud is not None and want_metrics:
             try:

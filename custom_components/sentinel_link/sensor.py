@@ -91,6 +91,14 @@ async def async_setup_entry(
             entities.append(
                 SentinelTempSensor(coordinator, node_id, label, entry.entry_id)
             )
+        # Geolocation sensor (ip2location.io — fetched once on boot)
+        entities.append(
+            SentinelGeoipSensor(coordinator, node_id, entry.entry_id)
+        )
+        # Public IP sensor (from same ip2location lookup)
+        entities.append(
+            SentinelPublicIpSensor(coordinator, node_id, entry.entry_id)
+        )
 
     async_add_entities(entities)
 
@@ -417,3 +425,104 @@ class SentinelUptimeSensor(_SystemSensorBase):
         if self.coordinator.data is None:
             return None
         return self.coordinator.data.get("uptime")
+
+
+# ---------------------------------------------------------------------------
+# Geolocation sensor (ip2location.io — once on boot)
+# ---------------------------------------------------------------------------
+
+class SentinelGeoipSensor(_SystemSensorBase):
+    """Geolocation sensor — shows city/country with rich attributes.
+
+    Fetched once from ip2location.io on first coordinator refresh and
+    cached for the life of the integration. State format:
+    ``City, Country``. Attributes carry the full response.
+    """
+
+    def __init__(
+        self, coordinator: SentinelCoordinator, node_id: str, entry_id: str
+    ) -> None:
+        super().__init__(coordinator, node_id, entry_id)
+        self.entity_description = SensorEntityDescription(
+            key="geoip",
+            name="Geolocation",
+            icon="mdi:map-marker",
+        )
+
+    @property
+    def unique_id(self) -> str:
+        return f"{DOMAIN}_{self._entry_id}_geoip"
+
+    @property
+    def name(self) -> str:
+        return "Sentinel Geolocation"
+
+    @property
+    def native_value(self) -> str | None:
+        if self.coordinator.data is None:
+            return None
+        geoip = self.coordinator.data.get("geoip")
+        if not geoip:
+            return None
+        city = geoip.get("city_name", "?")
+        country = geoip.get("country_name", "?")
+        return f"{city}, {country}"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        if self.coordinator.data is None:
+            return {}
+        geoip = self.coordinator.data.get("geoip", {})
+        return {
+            "ip": geoip.get("ip"),
+            "country_code": geoip.get("country_code"),
+            "country_name": geoip.get("country_name"),
+            "region_name": geoip.get("region_name"),
+            "city_name": geoip.get("city_name"),
+            "latitude": geoip.get("latitude"),
+            "longitude": geoip.get("longitude"),
+            "zip_code": geoip.get("zip_code"),
+            "time_zone": geoip.get("time_zone"),
+            "asn": geoip.get("asn"),
+            "as": geoip.get("as"),
+            "isp": geoip.get("isp"),
+            "domain": geoip.get("domain"),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Public IP sensor (from same ip2location geoip lookup)
+# ---------------------------------------------------------------------------
+
+class SentinelPublicIpSensor(_SystemSensorBase):
+    """Public IP sensor — shows the node's public IPv4 address.
+
+    Fetched once from ip2location.io as part of the geoip lookup.
+    """
+
+    def __init__(
+        self, coordinator: SentinelCoordinator, node_id: str, entry_id: str
+    ) -> None:
+        super().__init__(coordinator, node_id, entry_id)
+        self.entity_description = SensorEntityDescription(
+            key="public_ip",
+            name="Public IP",
+            icon="mdi:ip-network",
+        )
+
+    @property
+    def unique_id(self) -> str:
+        return f"{DOMAIN}_{self._entry_id}_public_ip"
+
+    @property
+    def name(self) -> str:
+        return "Sentinel Public IP"
+
+    @property
+    def native_value(self) -> str | None:
+        if self.coordinator.data is None:
+            return None
+        geoip = self.coordinator.data.get("geoip")
+        if not geoip:
+            return None
+        return geoip.get("ip")
