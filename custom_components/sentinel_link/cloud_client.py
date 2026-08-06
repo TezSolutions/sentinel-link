@@ -63,6 +63,11 @@ class SentinelCloudClient:
         self._ha_version = ha_version
         self._on_connection_state_change = on_connection_state_change  # async callable
 
+        _LOGGER.debug(
+            "Sentinel Link: cloud client created for %s @ %s:%s",
+            node_id, host, port,
+        )
+
         self._connected = False
         self._shutdown = threading.Event()
         self._thread: threading.Thread | None = None
@@ -246,7 +251,8 @@ class SentinelCloudClient:
             daemon=True,
         )
         self._thread.start()
-        _LOGGER.debug("Sentinel Link: cloud MQTT thread started")
+        _LOGGER.debug(
+            "Sentinel Link: cloud MQTT thread started")
 
     def disconnect(self) -> None:
         """Gracefully shut down the cloud MQTT connection."""

@@ -83,13 +83,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         on_connection_state_change=_on_cloud_connection_change,
     )
     # Start in background thread
-    await hass.async_add_executor_job(cloud_client.start)
+    try:
+        await hass.async_add_executor_job(cloud_client.start)
+    except Exception as exc:
+        _LOGGER.error(
+            "Sentinel Link: cloud client start failed: %s", exc, exc_info=True
+        )
 
     # ------------------------------------------------------------------
     # 2. Create DataUpdateCoordinator
     # ------------------------------------------------------------------
     coordinator = SentinelCoordinator(hass, entry.entry_id, cfg)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as exc:
+        _LOGGER.error(
+            "Sentinel Link: coordinator first refresh failed: %s",
+            exc,
+            exc_info=True,
+        )
 
     # ------------------------------------------------------------------
     # 3. Local MQTT helper (kept for potential future use — no discovery)
@@ -170,6 +182,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(
         entry, [Platform.SWITCH, Platform.SENSOR, Platform.BUTTON, Platform.BINARY_SENSOR]
     )
+
+    # Sync cloud-connected state to the binary_sensor (avoids race where
+    # cloud connects before the sensor platform is set up)
+    runtime = hass.data[DOMAIN].get(entry.entry_id, {})
+    avail_sensor = runtime.get("availability_sensor")
+    if avail_sensor is not None and cloud_client.is_connected:
+        avail_sensor.set_connected(True)
 
     # ------------------------------------------------------------------
     # 9. Graceful shutdown on HA stop
