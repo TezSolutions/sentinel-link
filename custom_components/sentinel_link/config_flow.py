@@ -461,7 +461,11 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                     ),
                 }
             )
-            return await self.async_step_init(None)
+            # Commit the options immediately — the reboot sub-step saves on
+            # its own submit instead of looping back to the script manager
+            # (which previously discarded the changes unless the user then
+            # walked through Feature Settings and submitted again).
+            return self.async_create_entry(title="", data=self._options)
 
         schema = vol.Schema(
             {
