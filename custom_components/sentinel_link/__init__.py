@@ -57,8 +57,38 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _sync_reboot() -> None:
-    """Synchronous reboot via subprocess — called in executor."""
-    _LOGGER.warning("Sentinel Link: executing sudo reboot NOW")
+    """Reboot the HOST device (not just the HA container).
+
+    On sentinel nodes the HA container is privileged, runs as root, and has
+    the host's ``/run/dbus`` mounted. We call the host's ``systemd-logind``
+    over D-Bus to reboot the actual host. The ``sudo``/plain ``reboot``
+    paths are fallbacks for other deployments.
+    """
+    _LOGGER.warning("Sentinel Link: executing HOST reboot")
+    # 1. Preferred: systemd-logind over the mounted host dbus
+    try:
+        rc = subprocess.run(
+            [
+                "dbus-send", "--system", "--print-reply",
+                "--dest=org.freedesktop.login1",
+                "/org/freedesktop/login1",
+                "org.freedesktop.login1.Manager.Reboot",
+                "boolean:true",
+            ],
+            timeout=15,
+            capture_output=True,
+            text=True,
+        )
+        _LOGGER.warning(
+            "Sentinel Link: logind reboot issued (rc=%s)", rc.returncode
+        )
+        return
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("Sentinel Link: dbus reboot failed: %s", exc)
+
+    # 2. Fallback: sudo /sbin/reboot (needs passwordless sudo)
     try:
         subprocess.run(
             ["sudo", "/sbin/reboot"],
@@ -66,19 +96,22 @@ def _sync_reboot() -> None:
             capture_output=True,
             text=True,
         )
+        return
     except FileNotFoundError:
-        # Fallback: try without sudo (container may run as root)
-        try:
-            subprocess.run(
-                ["/sbin/reboot"],
-                timeout=10,
-                capture_output=True,
-                text=True,
-            )
-        except Exception as exc:
-            _LOGGER.error("Sentinel Link: reboot failed (no sudo + no /sbin/reboot): %s", exc)
-    except Exception as exc:
+        pass
+    except Exception as exc:  # noqa: BLE001
         _LOGGER.error("Sentinel Link: sudo reboot failed: %s", exc)
+
+    # 3. Last resort: plain /sbin/reboot
+    try:
+        subprocess.run(
+            ["/sbin/reboot"],
+            timeout=10,
+            capture_output=True,
+            text=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.error("Sentinel Link: plain reboot failed: %s", exc)
 
 
 async def _async_execute_reboot(

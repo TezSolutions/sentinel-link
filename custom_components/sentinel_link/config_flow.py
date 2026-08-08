@@ -312,6 +312,9 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                 self._editing_index = None
                 return await self.async_step_script_edit()
 
+            if action == "reboot_schedule":
+                return await self.async_step_reboot()
+
             if action.startswith("edit_"):
                 idx = int(action.split("_", 1)[1])
                 self._editing_index = idx
@@ -336,6 +339,7 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
         action_options: list[SelectOptionDict] = [
             SelectOptionDict(value="next", label="Next: Feature Settings →"),
             SelectOptionDict(value="add_script", label="+ Add New Script"),
+            SelectOptionDict(value="reboot_schedule", label="Reboot Schedule"),
         ]
         for i, s in enumerate(scripts):
             name = s.get(CONF_SCRIPT_NAME) or s.get(CONF_SCRIPT_ID) or f"Script {i}"
@@ -404,12 +408,6 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                     CONF_DISK_MOUNTS: user_input.get(
                         CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS
                     ),
-                    CONF_REBOOT_ENABLED: user_input.get(
-                        CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED
-                    ),
-                    CONF_REBOOT_TIME: user_input.get(
-                        CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME
-                    ),
                 }
             )
             return self.async_create_entry(title="", data=self._options)
@@ -440,7 +438,33 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                     CONF_DISK_MOUNTS,
                     default=self._options.get(CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS),
                 ): str,
-                # ── Reboot Schedule ─────────────────────────────────────
+            }
+        )
+        return self.async_show_form(step_id="features", data_schema=schema)
+
+    # ------------------------------------------------------------------
+    # Reboot schedule sub-step
+    # ------------------------------------------------------------------
+
+    async def async_step_reboot(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure the daily device reboot schedule."""
+        if user_input is not None:
+            self._options.update(
+                {
+                    CONF_REBOOT_ENABLED: user_input.get(
+                        CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED
+                    ),
+                    CONF_REBOOT_TIME: user_input.get(
+                        CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME
+                    ),
+                }
+            )
+            return await self.async_step_init(None)
+
+        schema = vol.Schema(
+            {
                 vol.Optional(
                     CONF_REBOOT_ENABLED,
                     default=self._options.get(CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED),
@@ -451,7 +475,16 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                 ): str,
             }
         )
-        return self.async_show_form(step_id="features", data_schema=schema)
+        return self.async_show_form(
+            step_id="reboot",
+            data_schema=schema,
+            description_placeholders={
+                "reboot_note": (
+                    "Enables a daily reboot of the WHOLE device (host) at the "
+                    "given time in your local timezone. Format: HH:MM (24h)."
+                )
+            },
+        )
 
     # ------------------------------------------------------------------
     # Script add / edit sub-form
