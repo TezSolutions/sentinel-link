@@ -46,6 +46,8 @@ from .const import (
     CONF_ON_ARG,
     CONF_PARSE_RULE,
     CONF_POLL_INTERVAL,
+    CONF_REBOOT_ENABLED,
+    CONF_REBOOT_TIME,
     CONF_SCRIPT_CONTROL,
     CONF_SCRIPT_ID,
     CONF_SCRIPT_NAME,
@@ -70,6 +72,8 @@ from .const import (
     DEFAULT_OFF_ARG,
     DEFAULT_ON_ARG,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_REBOOT_ENABLED,
+    DEFAULT_REBOOT_TIME,
     DEFAULT_SCRIPT_CONTROL,
     DEFAULT_STATUS_ARG,
     DEFAULT_SYSTEM_METRICS,
@@ -400,6 +404,12 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                     CONF_DISK_MOUNTS: user_input.get(
                         CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS
                     ),
+                    CONF_REBOOT_ENABLED: user_input.get(
+                        CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED
+                    ),
+                    CONF_REBOOT_TIME: user_input.get(
+                        CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME
+                    ),
                 }
             )
             return self.async_create_entry(title="", data=self._options)
@@ -429,6 +439,15 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_DISK_MOUNTS,
                     default=self._options.get(CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS),
+                ): str,
+                # ── Reboot Schedule ─────────────────────────────────────
+                vol.Optional(
+                    CONF_REBOOT_ENABLED,
+                    default=self._options.get(CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED),
+                ): bool,
+                vol.Optional(
+                    CONF_REBOOT_TIME,
+                    default=self._options.get(CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME),
                 ): str,
             }
         )

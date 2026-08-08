@@ -26,6 +26,7 @@ from .const import (
     DOMAIN,
     MANUFACTURER,
     SCRIPT_TYPE_BUTTON,
+    SERVICE_REBOOT_NOW,
 )
 from .coordinator import SentinelCoordinator
 from .script_runner import parse_status, run_script
@@ -54,6 +55,12 @@ async def async_setup_entry(
         entities.append(
             SentinelScriptButton(hass, coordinator, script_entry, entry.entry_id)
         )
+
+    # Always add the built-in reboot button
+    node_id = cfg.get("node_id", "sentinel")
+    entities.append(
+        SentinelRebootButton(hass, node_id, entry.entry_id)
+    )
 
     async_add_entities(entities)
 
@@ -142,3 +149,57 @@ class SentinelScriptButton(ButtonEntity):
             )
         # Request a coordinator refresh so any related sensors update
         await self._coordinator.async_request_refresh()
+
+
+class SentinelRebootButton(ButtonEntity):
+    """A button entity that triggers an immediate device reboot.
+
+    Calls the ``reboot_now`` service on press. Always present on all
+    Sentinel Link entries.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        node_id: str,
+        entry_id: str,
+    ) -> None:
+        self.hass = hass
+        self._node_id = node_id
+        self._entry_id = entry_id
+
+        self.entity_description = ButtonEntityDescription(
+            key="reboot",
+            name="Reboot Device",
+            icon="mdi:restart",
+        )
+
+    @property
+    def unique_id(self) -> str:
+        return f"{DOMAIN}_{self._entry_id}_reboot"
+
+    @property
+    def name(self) -> str:
+        return "Sentinel Reboot Device"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_system")},
+            name=f"Sentinel Node ({self._node_id})",
+            manufacturer=MANUFACTURER,
+            model="Sentinel Link Gateway",
+        )
+
+    async def async_press(self) -> None:
+        """Call the reboot_now service on press."""
+        _LOGGER.warning(
+            "Sentinel Link: Reboot Device button pressed — calling %s service",
+            SERVICE_REBOOT_NOW,
+        )
+        await self.hass.services.async_call(
+            DOMAIN,
+            SERVICE_REBOOT_NOW,
+            {},
+            blocking=False,
+        )

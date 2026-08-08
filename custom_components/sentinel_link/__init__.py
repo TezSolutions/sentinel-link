@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import logging
+import subprocess
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
-from homeassistant.helpers.event import async_track_time_interval
-
-from datetime import timedelta
+from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_time_interval
+from homeassistant.util import dt as dt_util
 
 from .cloud_client import SentinelCloudClient
 from .const import (
@@ -22,6 +23,8 @@ from .const import (
     CONF_METRICS_INTERVAL,
     CONF_NODE_ID,
     CONF_NOTIFICATION_FORWARD,
+    CONF_REBOOT_ENABLED,
+    CONF_REBOOT_TIME,
     CONF_SCRIPT_CONTROL,
     CONF_SCRIPTS,
     CONF_SYSTEM_METRICS,
@@ -30,11 +33,15 @@ from .const import (
     DATA_MQTT_LOCAL,
     DATA_UNSUB_HEARTBEAT,
     DATA_UNSUB_NOTIFY,
+    DATA_UNSUB_REBOOT,
     DEFAULT_METRICS_INTERVAL,
     DEFAULT_NOTIFICATION_FORWARD,
+    DEFAULT_REBOOT_ENABLED,
+    DEFAULT_REBOOT_TIME,
     DOMAIN,
     HEARTBEAT_INTERVAL,
     PLATFORMS,
+    SERVICE_REBOOT_NOW,
     SERVICE_RELOAD,
     SERVICE_RUN_SCRIPT,
 )
@@ -42,6 +49,122 @@ from .coordinator import SentinelCoordinator
 from .mqtt_local import SentinelMqttLocal
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Reboot helpers
+# ---------------------------------------------------------------------------
+
+
+def _sync_reboot() -> None:
+    """Synchronous reboot via subprocess — called in executor."""
+    _LOGGER.warning("Sentinel Link: executing sudo reboot NOW")
+    try:
+        subprocess.run(
+            ["sudo", "/sbin/reboot"],
+            timeout=10,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        # Fallback: try without sudo (container may run as root)
+        try:
+            subprocess.run(
+                ["/sbin/reboot"],
+                timeout=10,
+                capture_output=True,
+                text=True,
+            )
+        except Exception as exc:
+            _LOGGER.error("Sentinel Link: reboot failed (no sudo + no /sbin/reboot): %s", exc)
+    except Exception as exc:
+        _LOGGER.error("Sentinel Link: sudo reboot failed: %s", exc)
+
+
+async def _async_execute_reboot(
+    hass: HomeAssistant,
+    cloud_client: Any,
+    node_id: str,
+) -> None:
+    """Publish offline status, then reboot the device."""
+    # Publish offline status before going down
+    try:
+        cloud_client.publish_availability("offline")
+        cloud_client.publish_notification(
+            "Sentinel Reboot",
+            f"Scheduled reboot for node {node_id} — going down now.",
+        )
+    except Exception:
+        pass
+    # Short delay to let MQTT messages flush
+    await hass.async_add_executor_job(lambda: __import__("time").sleep(1))
+    await hass.async_add_executor_job(_sync_reboot)
+
+
+def _calculate_next_reboot(reboot_time_str: str) -> datetime:
+    """Calculate the next UTC datetime for a daily HH:MM reboot time.
+
+    The *reboot_time_str* is in the HA-configured local time zone.
+    """
+    hour, minute = map(int, reboot_time_str.split(":"))
+    local_now = dt_util.as_local(dt_util.utcnow())
+    target_local = local_now.replace(
+        hour=hour, minute=minute, second=0, microsecond=0
+    )
+    if target_local <= local_now:
+        target_local += timedelta(days=1)
+    return dt_util.as_utc(target_local)
+
+
+@callback
+def _schedule_daily_reboot(
+    hass: HomeAssistant,
+    reboot_time_str: str,
+    cloud_client: Any,
+    node_id: str,
+) -> Any:
+    """Schedule the next daily reboot and return the unsub callback.
+
+    Uses ``async_track_point_in_utc_time`` — fires once. The callback
+    re-schedules itself for the following day so a single missed reboot
+    (e.g. because HA was offline) retries the next day.
+    """
+
+    async def _reboot_callback(now: datetime) -> None:
+        """Fire the reboot and reschedule for the next day."""
+        _LOGGER.warning(
+            "Sentinel Link: scheduled daily reboot triggered at %s",
+            dt_util.as_local(now).strftime("%H:%M:%S"),
+        )
+        await _async_execute_reboot(hass, cloud_client, node_id)
+
+        # If we're still running (reboot failed or is deferred), schedule next day
+        next_dt = _calculate_next_reboot(reboot_time_str)
+        # But only if the integration is still loaded
+        if hass.is_running:
+            new_unsub = async_track_point_in_utc_time(
+                hass, _reboot_callback, next_dt
+            )
+            # Store the new unsub in all active entries
+            for entry_id, runtime in list(hass.data.get(DOMAIN, {}).items()):
+                if isinstance(runtime, dict):
+                    old = runtime.get(DATA_UNSUB_REBOOT)
+                    if old:
+                        old()
+                    runtime[DATA_UNSUB_REBOOT] = new_unsub
+
+    next_dt = _calculate_next_reboot(reboot_time_str)
+    _LOGGER.info(
+        "Sentinel Link: next reboot scheduled at %s (local %s)",
+        next_dt.isoformat(),
+        dt_util.as_local(next_dt).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    return async_track_point_in_utc_time(hass, _reboot_callback, next_dt)
+
+
+# ---------------------------------------------------------------------------
+# Entry lifecycle
+# ---------------------------------------------------------------------------
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -177,6 +300,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(DOMAIN, SERVICE_RELOAD, _handle_reload)
 
     # ------------------------------------------------------------------
+    # 7b. Register reboot_now service
+    # ------------------------------------------------------------------
+    async def _handle_reboot_now(call: ServiceCall) -> None:
+        """Immediately reboot the device."""
+        _LOGGER.warning("Sentinel Link: reboot_now service called — executing reboot")
+        hass.async_create_task(_async_execute_reboot(hass, cloud_client, node_id))
+
+    if not hass.services.has_service(DOMAIN, SERVICE_REBOOT_NOW):
+        hass.services.async_register(DOMAIN, SERVICE_REBOOT_NOW, _handle_reboot_now)
+
+    # ------------------------------------------------------------------
+    # 7c. Schedule daily reboot if enabled
+    # ------------------------------------------------------------------
+    reboot_enabled: bool = cfg.get(CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED)
+    unsub_reboot: Any = None
+
+    if reboot_enabled:
+        reboot_time_str: str = cfg.get(CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME)
+        unsub_reboot = _schedule_daily_reboot(
+            hass, reboot_time_str, cloud_client, node_id
+        )
+        _LOGGER.info(
+            "Sentinel Link: daily reboot scheduled at %s",
+            reboot_time_str,
+        )
+    hass.data[DOMAIN][entry.entry_id][DATA_UNSUB_REBOOT] = unsub_reboot
+
+    # ------------------------------------------------------------------
     # 8. Forward setup to all platforms
     # ------------------------------------------------------------------
     await hass.config_entries.async_forward_entry_setups(
@@ -226,6 +377,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok:
         runtime = hass.data[DOMAIN].pop(entry.entry_id, {})
+
+        # Cancel reboot timer
+        unsub_reboot = runtime.get(DATA_UNSUB_REBOOT)
+        if unsub_reboot is not None:
+            unsub_reboot()
 
         # Cancel heartbeat
         unsub_hb = runtime.get(DATA_UNSUB_HEARTBEAT)

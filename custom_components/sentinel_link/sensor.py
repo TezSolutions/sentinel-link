@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from datetime import datetime, timedelta
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -24,6 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_AREA,
@@ -31,6 +34,8 @@ from .const import (
     CONF_ENABLED,
     CONF_MANUFACTURER,
     CONF_MODEL,
+    CONF_REBOOT_ENABLED,
+    CONF_REBOOT_TIME,
     CONF_SCRIPT_ID,
     CONF_SCRIPT_NAME,
     CONF_SCRIPT_TYPE,
@@ -38,6 +43,8 @@ from .const import (
     CONF_SYSTEM_METRICS,
     DATA_COORDINATOR,
     DEFAULT_DISK_MOUNTS,
+    DEFAULT_REBOOT_ENABLED,
+    DEFAULT_REBOOT_TIME,
     DOMAIN,
     MANUFACTURER,
     SCRIPT_TYPE_SENSOR,
@@ -98,6 +105,10 @@ async def async_setup_entry(
         # Public IP sensor (from same ip2location lookup)
         entities.append(
             SentinelPublicIpSensor(coordinator, node_id, entry.entry_id)
+        )
+        # Next scheduled reboot sensor
+        entities.append(
+            SentinelNextRebootSensor(coordinator, cfg, node_id, entry.entry_id)
         )
 
     async_add_entities(entities)
@@ -526,3 +537,75 @@ class SentinelPublicIpSensor(_SystemSensorBase):
         if not geoip:
             return None
         return geoip.get("ip")
+
+
+# ---------------------------------------------------------------------------
+# Next scheduled reboot sensor
+# ---------------------------------------------------------------------------
+
+
+class SentinelNextRebootSensor(_SystemSensorBase):
+    """Sensor showing the next scheduled reboot time.
+
+    Reads ``reboot_enabled`` and ``reboot_time`` from the config entry
+    options and computes the next occurrence in the local time zone.
+    Shows ``"Disabled"`` when the schedule is off.
+    """
+
+    def __init__(
+        self,
+        coordinator: SentinelCoordinator,
+        options: dict[str, Any],
+        node_id: str,
+        entry_id: str,
+    ) -> None:
+        super().__init__(coordinator, node_id, entry_id)
+        self._options = options
+        self.entity_description = SensorEntityDescription(
+            key="next_reboot",
+            name="Next Scheduled Reboot",
+            icon="mdi:calendar-clock",
+        )
+
+    @property
+    def unique_id(self) -> str:
+        return f"{DOMAIN}_{self._entry_id}_next_reboot"
+
+    @property
+    def name(self) -> str:
+        return "Sentinel Next Reboot"
+
+    @property
+    def native_value(self) -> str | None:
+        enabled: bool = self._options.get(
+            CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED
+        )
+        if not enabled:
+            return "Disabled"
+
+        reboot_time_str: str = self._options.get(
+            CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME
+        )
+        try:
+            hour, minute = map(int, reboot_time_str.split(":"))
+            local_now = dt_util.as_local(dt_util.utcnow())
+            target_local = local_now.replace(
+                hour=hour, minute=minute, second=0, microsecond=0
+            )
+            if target_local <= local_now:
+                target_local += timedelta(days=1)
+            return target_local.strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return "Invalid"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        enabled: bool = self._options.get(
+            CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED
+        )
+        return {
+            "reboot_enabled": enabled,
+            "reboot_time": self._options.get(
+                CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME
+            ),
+        }

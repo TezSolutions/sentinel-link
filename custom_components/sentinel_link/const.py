@@ -141,6 +141,27 @@ TOPIC_CLOUD_GEOIP = "sentinel-link/{node_id}/geoip"
 TOPIC_LOCAL_GEOIP_STATE = "sentinel_link/{node_id}/geoip/state"
 TOPIC_LOCAL_GEOIP_DISCOVERY = "homeassistant/sensor/{node_id}_geoip/config"
 # ---------------------------------------------------------------------------
+# Reboot schedule
+# ---------------------------------------------------------------------------
+CONF_REBOOT_ENABLED = "reboot_enabled"
+CONF_REBOOT_TIME = "reboot_time"  # daily time in HH:MM local format
+
+DEFAULT_REBOOT_ENABLED = False
+DEFAULT_REBOOT_TIME = "03:00"
+
+TOPIC_CLOUD_REBOOT = "sentinel-link/{node_id}/reboot"
+
+# ---------------------------------------------------------------------------
+# Runtime data keys  (additions)
+# ---------------------------------------------------------------------------
+DATA_UNSUB_REBOOT = "unsub_reboot"
+
+# ---------------------------------------------------------------------------
+# Service names  (additions)
+# ---------------------------------------------------------------------------
+SERVICE_REBOOT_NOW = "reboot_now"
+
+# ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
 HEARTBEAT_INTERVAL = 60  # seconds
