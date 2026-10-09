@@ -1,4 +1,4 @@
-"""Wire the Sentinel Link API into Home Assistant (register once, toggle live)."""
+"""Wire the Sentinel Link API into the hub core (register once, toggle live)."""
 from __future__ import annotations
 
 import logging

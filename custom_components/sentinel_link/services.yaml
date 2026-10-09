@@ -30,6 +30,6 @@ run_script:
 reload:
   name: Reload
   description: >
-    Reload the Sentinel Link integration without restarting Home Assistant.
+    Reload the Sentinel Link integration without restarting Sentinel Hub.
     Useful after changing configuration options.
   fields: {}

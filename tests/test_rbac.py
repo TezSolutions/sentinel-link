@@ -198,7 +198,7 @@ def test_api_docs_have_no_home_assistant_wording():
     sys.path.insert(0, str(root / "api"))
     import openapi
     spec = json.dumps(openapi.build_spec("1.6.0", "http://x")) + openapi.SWAGGER_HTML
-    for name in ("strings.json", "translations/en.json"):
+    for name in ("strings.json", "translations/en.json", "services.yaml"):
         spec += (root / name).read_text()
     low = spec.lower()
     assert "home assistant" not in low and "homeassistant" not in low and "companion app" not in low
