@@ -83,8 +83,8 @@ class OpenApiView(HomeAssistantView):
         st: ApiState | None = hass.data.get(API_DATA)
         if st is None or not st.enabled:
             return _err(404, "api_disabled", "Sentinel Link API is disabled on this node")
-        origin = f"{request.scheme}://{request.host}"
-        return web.json_response(build_spec(st.version, origin), headers={"Cache-Control": "no-cache"})
+        # relative server URL: works on the LAN address, the public domain and behind the node portal alike
+        return web.json_response(build_spec(st.version, "/"), headers={"Cache-Control": "no-cache"})
 
 
 class DocsView(HomeAssistantView):

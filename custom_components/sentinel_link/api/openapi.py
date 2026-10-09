@@ -41,8 +41,8 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
             "version": f"{API_VERSION} (integration {version})",
             "description": (
                 "Role-based control + realtime state for a Sentinel node, for third-party apps.\n\n"
-                "**Authentication** - same as the Home Assistant Companion App: obtain an access token through "
-                "Home Assistant's OAuth2 login flow (`/auth/authorize` -> `/auth/token`) or create a long-lived "
+                "**Authentication** - standard OAuth2 sign-in against the node (Sentinel Hub): obtain an access token through "
+                "the hub's login flow (`/auth/authorize` -> `/auth/token`) or create a long-lived "
                 "access token, and send `Authorization: Bearer <token>`.\n\n"
                 "**Roles** - `viewer`, `operator`, `manager`, `admin` (plus custom roles). Roles are assigned in the "
                 "node's management interface (Users). Entities a role may not see are reported as `404`, "
@@ -52,7 +52,7 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
                 "`{\"id\":1,\"type\":\"sentinel_link/subscribe\",\"domains\":[\"light\"],\"initial\":true}`; "
                 "or Server-Sent Events: `GET /events` (see below). Both deliver only what the caller's role may read.\n\n"
                 "**Internal vs external server** - the API is identical on the LAN address and the public address; "
-                "switch the base URL (as the Companion App does)."
+                "switch the base URL depending on where the app is."
             ),
         },
         "servers": [{"url": server_url}] if server_url else [],
@@ -118,7 +118,7 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
         },
         "components": {
             "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer",
-                                                "description": "Home Assistant access token (OAuth2 or long-lived)."}},
+                                                "description": "Sentinel Hub access token (OAuth2 or long-lived)."}},
             "schemas": {
                 "Error": {"type": "object", "properties": {"error": {"type": "object", "properties": {
                     "code": {"type": "string"}, "message": {"type": "string"}}}}},

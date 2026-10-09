@@ -9,6 +9,8 @@ txt = open(os.path.expanduser("~/.bashrc")).read()
 APASS = re.search(r'^\s*export\s+HA_UI_PASS=(["\']?)(.*?)\1\s*$', txt, re.M).group(2)
 TPASS = "Tmp-" + uuid.uuid4().hex[:14]
 BASE = f"{SCHEME}://{HOST}"
+# like a real third-party app: its own https client id (HA refuses a bare-IP https client id)
+CID = "https://sentinel-app.example/" if SCHEME == "https" else BASE + "/"
 API = BASE + "/api/sentinel_link/v1"
 R = []
 
@@ -19,13 +21,14 @@ def ok(name, cond, extra=""):
 
 
 async def token(s, user, pw):
-    r = await s.post(BASE + "/auth/login_flow", json={"client_id": BASE + "/", "handler": ["homeassistant", None], "redirect_uri": BASE + "/?auth_callback=1"}, ssl=False)
+    await asyncio.sleep(1.2)  # stay under the sign-in rate limit like a normal client
+    r = await s.post(BASE + "/auth/login_flow", json={"client_id": CID, "handler": ["homeassistant", None], "redirect_uri": CID + "?auth_callback=1"}, ssl=False)
     fid = (await r.json())["flow_id"]
-    r = await s.post(f"{BASE}/auth/login_flow/{fid}", json={"username": user, "password": pw, "client_id": BASE + "/"}, ssl=False)
+    r = await s.post(f"{BASE}/auth/login_flow/{fid}", json={"username": user, "password": pw, "client_id": CID}, ssl=False)
     j = await r.json()
     if j.get("type") != "create_entry":
         return None
-    r = await s.post(BASE + "/auth/token", data={"grant_type": "authorization_code", "code": j["result"], "client_id": BASE + "/"}, ssl=False)
+    r = await s.post(BASE + "/auth/token", data={"grant_type": "authorization_code", "code": j["result"], "client_id": CID}, ssl=False)
     return (await r.json()).get("access_token")
 
 
@@ -49,7 +52,7 @@ class WS:
 
 async def main():
     created = []
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as s:
         atok = await token(s, ADMIN, APASS)
         ok("admin login", atok)
         H = lambda t: {"Authorization": "Bearer " + t}
@@ -57,6 +60,11 @@ async def main():
             st = (await a.call(type="sentinel_link/status"))["result"]
             ok("status: enabled by default", st.get("enabled") is True, st.get("enabled"))
             ok("status: version 1.6.0", st.get("integration_version") == "1.6.0", st.get("integration_version"))
+            # remove leftovers of an earlier failed run, so a retry always starts clean
+            ul0 = (await a.call(type="hub_mgmt/users_list"))["result"]
+            for u in (ul0["users"] if isinstance(ul0, dict) else ul0):
+                if str(u.get("username") or u.get("name") or "").startswith("e2e"):
+                    await a.call(type="hub_mgmt/user_remove", user_id=u["id"])
             # temp users
             roles = {"viewer": "e2eview", "operator": "e2eoper", "manager": "e2emgr"}
             for role, uname in roles.items():

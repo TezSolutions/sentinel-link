@@ -189,3 +189,16 @@ def test_hub_mgmt_role_aliases():
     assert cfg.resolve_role("u1", False) == "manager"
     assert cfg.resolve_role("u2", False) == "viewer"
     assert cfg.resolve_role("u3", False) is None
+
+
+def test_api_docs_have_no_home_assistant_wording():
+    """Third-party docs and user-facing strings must say Sentinel Hub, never Home Assistant."""
+    import json, pathlib, sys
+    root = pathlib.Path(__file__).parents[1] / "custom_components/sentinel_link"
+    sys.path.insert(0, str(root / "api"))
+    import openapi
+    spec = json.dumps(openapi.build_spec("1.6.0", "http://x")) + openapi.SWAGGER_HTML
+    for name in ("strings.json", "translations/en.json"):
+        spec += (root / name).read_text()
+    low = spec.lower()
+    assert "home assistant" not in low and "homeassistant" not in low and "companion app" not in low

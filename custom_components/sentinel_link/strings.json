@@ -54,7 +54,7 @@
         "data_description": {
           "availability_beacon": "Publish online/offline status to the cloud broker.",
           "system_metrics": "Periodically publish CPU, RAM, disk and temperature to the cloud broker.",
-          "notification_forward": "Forward Home Assistant persistent notifications to the cloud broker.",
+          "notification_forward": "Forward Sentinel Hub persistent notifications to the cloud broker.",
           "script_control": "Create HA entities (switch, sensor, button) for each registered script.",
           "metrics_interval": "How often (in seconds) to collect and publish system metrics.",
           "disk_mounts": "Comma-separated list of mount points to monitor (e.g. /, /mnt/data).",
@@ -66,7 +66,7 @@
       "cannot_connect": "Cannot connect to the MQTT broker. Check host, port, and credentials.",
       "timeout": "Connection attempt timed out. The broker may be unreachable.",
       "tls_error": "TLS configuration error. Verify certificates or disable TLS.",
-      "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
+      "unknown": "An unexpected error occurred. Check the Sentinel Hub logs for details."
     },
     "abort": {
       "already_configured": "Sentinel Link is already configured."
@@ -90,7 +90,7 @@
           "action": "Choose an action to perform on a script, or select 'Save Settings' to save feature changes below.",
           "availability_beacon": "Publish online/offline LWT status to the cloud broker.",
           "system_metrics": "Periodically publish CPU, RAM, disk and temperature to the cloud broker.",
-          "notification_forward": "Forward Home Assistant persistent notifications to the cloud broker.",
+          "notification_forward": "Forward Sentinel Hub persistent notifications to the cloud broker.",
           "script_control": "Create HA entities for each registered script.",
           "metrics_interval": "How often (in seconds) to collect and publish system metrics.",
           "disk_mounts": "Comma-separated list of mount points to monitor."
@@ -123,7 +123,7 @@
           "off_arg": "Argument passed to disable/deactivate the script (e.g. 'disable').",
           "parse_rule": "How to interpret script output. Choose a preset or type a custom regex: pattern.",
           "poll_interval": "How often to poll script status (seconds).",
-          "area": "Optional Home Assistant area to assign this entity to.",
+          "area": "Optional Sentinel Hub area to assign this entity to.",
           "manufacturer": "Device manufacturer shown in device info.",
           "model": "Device model shown in device info."
         }
