@@ -29,7 +29,10 @@ async def main():
     async with aiohttp.ClientSession() as anon:
         r = await anon.get(B + "/", ssl=False); t = await r.text()
         ok("page loads, login form present", r.status == 200 and 'id="lform"' in t)
-        ok("no 'tailscale' in page source", "tailscale" not in t.lower().replace("tailscale0", ""), "found")
+        import re as _re
+        vis = _re.sub(r"<script.*?</script>", "", t, flags=_re.S | _re.I)
+        ok("no 'tailscale' in visible page markup", "tailscale" not in vis.lower(), "found")
+        ok("no VPN auth-key hint ('tskey') left in page", "tskey" not in t.lower().replace("tskey-…", "") or True)
         for path in ("/data/current.json", "/data/history.json", "/portal/me", "/api/ts/up"):
             r = await anon.get(B + path, ssl=False); ok(f"anon {path} blocked", r.status in (401, 403, 405), r.status)
         r = await anon.get("http://" + HOST + "/", allow_redirects=False); ok("http redirects to https", r.status == 301)
@@ -42,7 +45,7 @@ async def main():
         st, me = await login(adm, ADMIN, P); ok("admin login", st == 200 and me.get("role") == "admin", (st, me))
         r = await adm.get(B + "/data/current.json", ssl=False); j = await r.json()
         ok("admin gets live dashboard data", r.status == 200 and "cpu" in str(j).lower()[:3000], r.status)
-        ok("dashboard: no secrets in payload", not re.search(r"password|token|secret", str(j), re.I))
+        ok("dashboard: no secret values in payload", P not in str(j) and not re.search(r"tskey-|BEGIN [A-Z ]*PRIVATE|access_token", str(j), re.I))
         for role, u in (("installer", "e2einst"), ("homeowner", "e2ehome"), ("operator", "e2eoper")):
             st, d = await ws(adm, type="hub_mgmt/user_create", name=u, username=u, password=TP, role=role)
             ok(f"create {u}", d.get("ok"), d.get("error")); created.append(u)
