@@ -133,7 +133,7 @@ async def main():
             # role change via Hub Mgmt applies immediately
             ul = (await a.call(type="hub_mgmt/users_list"))["result"]
             # realtime: WS subscribe + SSE; flip a switch/light as operator and watch viewer receive it
-            target = (switches or lights)
+            target = [e for e in (switches + lights) if e["state"] in ("on", "off") and "toggle" in e.get("commands", [])]
             if target:
                 tid = target[0]["entity_id"]
                 vt = await token(s, "e2eview", TPASS); ot = await token(s, "e2eoper", TPASS)
