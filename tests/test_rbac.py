@@ -202,3 +202,12 @@ def test_api_docs_have_no_home_assistant_wording():
         spec += (root / name).read_text()
     low = spec.lower()
     assert "home assistant" not in low and "homeassistant" not in low and "companion app" not in low
+
+
+def test_portal_source_has_no_home_assistant_wording():
+    import pathlib
+    root = pathlib.Path.home() / "tez-sentinel-image" / "portal-ui" / "src"
+    if not root.exists():
+        return
+    bad = [str(f) for f in root.rglob("*") if f.is_file() and "home assistant" in f.read_text().lower()]
+    assert not bad, bad

@@ -232,9 +232,9 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
 
 SWAGGER_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Sentinel Link API</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"></head>
+<link rel="stylesheet" href="/api/sentinel_link/v1/static/swagger-ui.css"></head>
 <body><div id="ui"></div>
 <noscript>JavaScript is required. The raw spec is at <a href="%(spec)s">%(spec)s</a>.</noscript>
-<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script src="/api/sentinel_link/v1/static/swagger-ui-bundle.js"></script>
 <script>window.ui=SwaggerUIBundle({url:"%(spec)s",dom_id:"#ui",persistAuthorization:true,tryItOutEnabled:true});</script>
 </body></html>"""

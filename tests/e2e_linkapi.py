@@ -92,6 +92,10 @@ class WS:
                 return r
 
 
+import json as _j, pathlib as _p
+MANIFEST_VERSION = _j.loads((_p.Path(__file__).parents[1] / 'custom_components/sentinel_link/manifest.json').read_text())['version']
+
+
 async def main():
     created = []
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as s:
@@ -106,7 +110,7 @@ async def main():
             ok("hub token is NOT accepted by the Link API", (await s.get(API + "/me", headers=H(hub_admin), ssl=False)).status == 401)
             st = (await a.call(type="sentinel_link/status"))["result"]
             ok("status: enabled by default", st.get("enabled") is True, st.get("enabled"))
-            ok("status: version 1.7.0", st.get("integration_version") == "1.7.0", st.get("integration_version"))
+            ok("status: version", st.get("integration_version") == MANIFEST_VERSION, st.get("integration_version"))
             # remove leftovers of an earlier failed run, so a retry always starts clean
             ul0 = (await a.call(type="hub_mgmt/users_list"))["result"]
             for u in (ul0["users"] if isinstance(ul0, dict) else ul0):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -35,6 +36,10 @@ async def async_setup_api(hass: HomeAssistant, entry: ConfigEntry, cfg: dict[str
             hass.http.register_view(view)
         for command in ALL_COMMANDS:
             websocket_api.async_register_command(hass, command)
+        # bundled Swagger UI (public library files, no data) so /docs works on an offline node
+        from homeassistant.components.http import StaticPathConfig
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig("/api/sentinel_link/v1/static", os.path.join(os.path.dirname(__file__), "static"), True)])
         hass.data[_REGISTERED] = True
     _LOGGER.warning("Sentinel Link API v1 %s (/api/sentinel_link/v1/docs)", "ENABLED" if enabled else "disabled")
     return st
