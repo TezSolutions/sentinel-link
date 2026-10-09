@@ -196,6 +196,13 @@ def _schedule_daily_reboot(
     return async_track_point_in_utc_time(hass, _reboot_callback, next_dt)
 
 
+def _read_version() -> str:
+    import json
+    import pathlib
+
+    return json.loads((pathlib.Path(__file__).parent / "manifest.json").read_text())["version"]
+
+
 # ---------------------------------------------------------------------------
 # Entry lifecycle
 # ---------------------------------------------------------------------------
@@ -379,10 +386,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # 8b. Sentinel Link API v1 (REST + realtime + RBAC); on by default
     # ------------------------------------------------------------------
     try:
-        import json as _json
-        import pathlib as _pl
-
-        manifest_version = _json.loads((_pl.Path(__file__).parent / "manifest.json").read_text())["version"]
+        manifest_version = await hass.async_add_executor_job(_read_version)
         await async_setup_api(hass, entry, cfg, node_id, manifest_version)
     except Exception as exc:  # noqa: BLE001 - the API must never break the core integration
         _LOGGER.error("Sentinel Link: API setup failed: %s", exc, exc_info=True)
