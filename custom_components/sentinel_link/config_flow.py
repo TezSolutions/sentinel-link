@@ -20,6 +20,7 @@ from homeassistant.helpers.selector import (
     SelectOptionDict,
 )
 
+from .api.setup import CONF_API_ENABLED, DEFAULT_API_ENABLED
 from .const import (
     BUNDLED_VIGI_ALARM,
     CONF_AREA,
@@ -277,6 +278,7 @@ class SentinelLinkConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_METRICS_INTERVAL, default=DEFAULT_METRICS_INTERVAL
                 ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
                 vol.Optional(CONF_DISK_MOUNTS, default=DEFAULT_DISK_MOUNTS): str,
+                vol.Optional(CONF_API_ENABLED, default=DEFAULT_API_ENABLED): bool,
             }
         )
         return self.async_show_form(step_id="features", data_schema=schema)
@@ -408,6 +410,9 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                     CONF_DISK_MOUNTS: user_input.get(
                         CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS
                     ),
+                    CONF_API_ENABLED: user_input.get(
+                        CONF_API_ENABLED, DEFAULT_API_ENABLED
+                    ),
                 }
             )
             return self.async_create_entry(title="", data=self._options)
@@ -438,6 +443,10 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
                     CONF_DISK_MOUNTS,
                     default=self._options.get(CONF_DISK_MOUNTS, DEFAULT_DISK_MOUNTS),
                 ): str,
+                vol.Optional(
+                    CONF_API_ENABLED,
+                    default=self._options.get(CONF_API_ENABLED, DEFAULT_API_ENABLED),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="features", data_schema=schema)

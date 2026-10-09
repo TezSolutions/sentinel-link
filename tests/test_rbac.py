@@ -169,3 +169,23 @@ def test_cmd_rejects(dom, c, data, code):
 def test_no_dangerous_domains():
     for bad in ("homeassistant", "shell_command", "python_script", "rest_command", "hassio", "script_reload"):
         assert bad not in cmd.COMMANDS
+
+
+def test_hard_deny_reboot_button_and_domains():
+    r = rbac
+    cfg = r.RbacConfig(exposure={**r.default_exposure(), "domains": ["button", "device_tracker"],
+                                 "include_entities": ["button.x"]})
+    reboot = r.EntityCtx("button.sentinel_reboot", "p1", platform="sentinel_link")
+    other = r.EntityCtx("button.doorbell", "p2", platform="tuya")
+    tracker = r.EntityCtx("device_tracker.phone", "p3")
+    assert not cfg.can("admin", reboot, "press")
+    assert cfg.can("admin", other, "press")
+    assert not cfg.can("admin", tracker, "read")
+
+
+def test_hub_mgmt_role_aliases():
+    r = rbac
+    cfg = r.RbacConfig(user_roles={"u1": "homeowner", "u2": "installer", "u3": "bogus"})
+    assert cfg.resolve_role("u1", False) == "manager"
+    assert cfg.resolve_role("u2", False) == "viewer"
+    assert cfg.resolve_role("u3", False) is None

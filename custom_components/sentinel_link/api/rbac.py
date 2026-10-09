@@ -58,6 +58,20 @@ BUILTIN_ROLES: dict[str, dict[str, Any]] = {
 
 BUILTIN_NAMES = frozenset(BUILTIN_ROLES)
 
+# hub_mgmt roles that are not API roles map onto one (admin-overridable later).
+ROLE_ALIASES = {"homeowner": ROLE_MANAGER, "installer": ROLE_VIEWER}
+
+# Never exposed through the API, whatever the role or exposure settings say.
+HARD_DENY_DOMAINS = frozenset({
+    "device_tracker", "person", "zone", "update", "persistent_notification",
+    "conversation", "tts", "stt", "assist_satellite", "backup", "remote",
+})
+# (platform, domain) pairs: the node's own destructive controls.
+HARD_DENY_PLATFORM_DOMAIN = frozenset({
+    ("sentinel_link", "button"),   # reboot-now
+    ("hub_mgmt", "button"),
+})
+
 
 @dataclass(frozen=True)
 class EntityCtx:
@@ -68,6 +82,7 @@ class EntityCtx:
     area_id: str | None = None
     labels: tuple[str, ...] = ()
     diagnostic: bool = False
+    platform: str = ""
 
     @property
     def domain(self) -> str:
@@ -89,6 +104,8 @@ def _sel(values: Iterable[str] | None) -> set[str]:
 
 
 def is_exposed(exposure: dict[str, Any], ent: EntityCtx) -> bool:
+    if ent.domain in HARD_DENY_DOMAINS or (ent.platform, ent.domain) in HARD_DENY_PLATFORM_DOMAIN:
+        return False
     ids = {ent.entity_id, ent.pid}
     if ids.intersection(_sel(exposure.get("exclude_entities"))):
         return False
@@ -187,6 +204,7 @@ class RbacConfig:
             return ROLE_ADMIN
         roles = self.all_roles()
         r = self.user_roles.get(user_id)
+        r = ROLE_ALIASES.get(r, r)
         if r in roles and r != ROLE_ADMIN:
             return r
         for gid in group_ids:

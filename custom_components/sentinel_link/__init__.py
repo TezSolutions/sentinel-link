@@ -45,6 +45,7 @@ from .const import (
     SERVICE_RELOAD,
     SERVICE_RUN_SCRIPT,
 )
+from .api.setup import async_setup_api, async_unload_api
 from .coordinator import SentinelCoordinator
 from .mqtt_local import SentinelMqttLocal
 
@@ -375,6 +376,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         avail_sensor.set_connected(True)
 
     # ------------------------------------------------------------------
+    # 8b. Sentinel Link API v1 (REST + realtime + RBAC); on by default
+    # ------------------------------------------------------------------
+    try:
+        import json as _json
+        import pathlib as _pl
+
+        manifest_version = _json.loads((_pl.Path(__file__).parent / "manifest.json").read_text())["version"]
+        await async_setup_api(hass, entry, cfg, node_id, manifest_version)
+    except Exception as exc:  # noqa: BLE001 - the API must never break the core integration
+        _LOGGER.error("Sentinel Link: API setup failed: %s", exc, exc_info=True)
+
+    # ------------------------------------------------------------------
     # 9. Graceful shutdown on HA stop
     # ------------------------------------------------------------------
     @callback
@@ -396,7 +409,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _async_update_options(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Handle options update — reload entry."""
+    """Handle options update — reload entry (unless only the API toggle changed)."""
+    from .api.core import API_DATA
+
+    st = hass.data.get(API_DATA)
+    if st is not None and st.skip_reload:
+        st.skip_reload = False
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -409,6 +428,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     if unload_ok:
+        await async_unload_api(hass)
         runtime = hass.data[DOMAIN].pop(entry.entry_id, {})
 
         # Cancel reboot timer

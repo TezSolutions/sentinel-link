@@ -48,7 +48,8 @@
           "notification_forward": "Notification Forwarding",
           "script_control": "Script Control",
           "metrics_interval": "Metrics Interval (seconds)",
-          "disk_mounts": "Disk Mounts to Monitor"
+          "disk_mounts": "Disk Mounts to Monitor",
+          "api_enabled": "Sentinel Link API"
         },
         "data_description": {
           "availability_beacon": "Publish online/offline status to the cloud broker.",
@@ -56,7 +57,8 @@
           "notification_forward": "Forward Home Assistant persistent notifications to the cloud broker.",
           "script_control": "Create HA entities (switch, sensor, button) for each registered script.",
           "metrics_interval": "How often (in seconds) to collect and publish system metrics.",
-          "disk_mounts": "Comma-separated list of mount points to monitor (e.g. /, /mnt/data)."
+          "disk_mounts": "Comma-separated list of mount points to monitor (e.g. /, /mnt/data).",
+          "api_enabled": "Serve the role-based REST/realtime API for third-party apps at /api/sentinel_link/v1 (docs at /api/sentinel_link/v1/docs). On by default; can also be switched in the node management portal."
         }
       }
     },
@@ -91,7 +93,8 @@
           "notification_forward": "Notification Forwarding",
           "script_control": "Script Control",
           "metrics_interval": "Metrics Interval (seconds)",
-          "disk_mounts": "Disk Mounts to Monitor"
+          "disk_mounts": "Disk Mounts to Monitor",
+          "api_enabled": "Sentinel Link API"
         },
         "data_description": {
           "availability_beacon": "Publish online/offline LWT status to the cloud broker.",
@@ -99,7 +102,8 @@
           "notification_forward": "Forward Home Assistant persistent notifications to the cloud broker.",
           "script_control": "Create HA entities for each registered script.",
           "metrics_interval": "How often (in seconds) to collect and publish system metrics.",
-          "disk_mounts": "Comma-separated list of mount points to monitor."
+          "disk_mounts": "Comma-separated list of mount points to monitor.",
+          "api_enabled": "Serve the role-based REST/realtime API for third-party apps at /api/sentinel_link/v1 (docs at /api/sentinel_link/v1/docs). On by default; can also be switched in the node management portal."
         }
       },
       "script_edit": {
@@ -129,13 +133,27 @@
   },
   "entity": {
     "sensor": {
-      "cpu": {"name": "CPU Usage"},
-      "ram": {"name": "RAM Usage"},
-      "geoip": {"name": "IP Geolocation"},
-      "public_ip": {"name": "Public IP"},
-      "cpu_temperature": {"name": "CPU Temperature"},
-      "nvme_temperature": {"name": "NVMe Temperature"},
-      "ambient_temperature": {"name": "Ambient Temperature"}
+      "cpu": {
+        "name": "CPU Usage"
+      },
+      "ram": {
+        "name": "RAM Usage"
+      },
+      "geoip": {
+        "name": "IP Geolocation"
+      },
+      "public_ip": {
+        "name": "Public IP"
+      },
+      "cpu_temperature": {
+        "name": "CPU Temperature"
+      },
+      "nvme_temperature": {
+        "name": "NVMe Temperature"
+      },
+      "ambient_temperature": {
+        "name": "Ambient Temperature"
+      }
     },
     "binary_sensor": {
       "cloud_connected": {
