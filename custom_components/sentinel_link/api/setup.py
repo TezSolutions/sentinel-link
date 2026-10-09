@@ -9,6 +9,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.components import websocket_api
 
 from .core import API_DATA, ApiState
+from .tokens import Throttle as tok_throttle
+from .auth import AUTH_VIEWS
 from .views import ALL_VIEWS
 from .websocket import ALL_COMMANDS
 
@@ -29,7 +31,7 @@ async def async_setup_api(hass: HomeAssistant, entry: ConfigEntry, cfg: dict[str
     hass.data[API_DATA] = st
     st.async_start()
     if not hass.data.get(_REGISTERED):
-        for view in ALL_VIEWS:
+        for view in (*ALL_VIEWS, *AUTH_VIEWS):
             hass.http.register_view(view)
         for command in ALL_COMMANDS:
             websocket_api.async_register_command(hass, command)
@@ -51,6 +53,8 @@ async def async_set_enabled(hass: HomeAssistant, enabled: bool) -> None:
     if st is None:
         return
     st.enabled = enabled
+    st.throttle = tok_throttle()      # switching the API off/on also clears sign-in lockouts and half-finished sign-ins
+    st.pending.clear()
     if not enabled:
         for sub in list(st.subscribers.values()):
             try:

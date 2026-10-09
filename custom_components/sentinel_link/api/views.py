@@ -8,7 +8,7 @@ from typing import Any
 
 from aiohttp import web
 from homeassistant.components import camera as camera_comp
-from homeassistant.components.http import KEY_HASS_USER, HomeAssistantView
+from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import area_registry as ar
@@ -32,18 +32,32 @@ def _api(hass: HomeAssistant) -> ApiState | None:
     return st if st is not None and st.enabled else None
 
 
+def _bearer(request: web.Request) -> str | None:
+    h = request.headers.get("Authorization", "")
+    return h[7:].strip() if h[:7].lower() == "bearer " else None
+
+
 class _Base(HomeAssistantView):
-    requires_auth = True
+    """Link API views use Sentinel Link's OWN tokens (not hub tokens): requires_auth=False turns the hub's
+    authentication off for these routes and ``_ctx`` validates the Link token instead."""
+
+    requires_auth = False
     cors_allowed = True
 
-    def _ctx(self, request: web.Request):
-        """Return (hass, state, user, role) or an error Response."""
+    async def _ctx(self, request: web.Request):
+        """Return (hass, state, user, role) or an error Response. The token record is in request['sl_token']."""
         hass: HomeAssistant = request.app["hass"]
         st = _api(hass)
         if st is None:
             return _err(404, "api_disabled", "Sentinel Link API is disabled on this node")
-        user = request[KEY_HASS_USER]
-        role = st.role_for(user)
+        token = _bearer(request)
+        auth = await st.authenticate(token) if token else None
+        if auth is None:
+            resp = _err(401, "unauthorized", "Missing, invalid, expired or revoked Sentinel Link token")
+            resp.headers["WWW-Authenticate"] = 'Bearer realm="Sentinel Link"'
+            return resp
+        user, rec, role = auth
+        request["sl_token"] = rec
         if role is None:
             return _err(403, "no_role", "No API role is assigned to this user")
         return hass, st, user, role
@@ -67,8 +81,9 @@ class InfoView(HomeAssistantView):
             "node_id": st.node_id if st else None,
             "docs": f"{BASE}/docs",
             "openapi": f"{BASE}/openapi.json",
-            "auth": {"type": "bearer", "authorize": "/auth/authorize", "token": "/auth/token"},
-            "realtime": {"websocket": "/api/websocket (sentinel_link/subscribe)", "sse": f"{BASE}/events"},
+            "auth": {"type": "oauth2_pkce+bearer", "authorize": f"{BASE}/auth/authorize", "token": f"{BASE}/auth/token",
+                     "revoke": f"{BASE}/auth/revoke", "tokens": f"{BASE}/auth/tokens", "new_token_page": f"{BASE}/auth/new-token"},
+            "realtime": {"websocket": f"{BASE}/ws", "sse": f"{BASE}/events"},
         }, headers=_JSON_HEADERS)
 
 
@@ -105,7 +120,7 @@ class MeView(_Base):
     name = "api:sentinel_link:me"
 
     async def get(self, request: web.Request) -> web.Response:
-        c = self._ctx(request)
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         _hass, _st, user, role = c
@@ -118,7 +133,7 @@ class EntitiesView(_Base):
     name = "api:sentinel_link:entities"
 
     async def get(self, request: web.Request) -> web.Response:
-        c = self._ctx(request)
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         _hass, st, user, role = c
@@ -128,7 +143,7 @@ class EntitiesView(_Base):
             offset = max(0, int(q.get("offset", 0)))
         except ValueError:
             return _err(400, "invalid_query", "limit/offset must be integers")
-        cfg, role, states = st.visible_states(user)
+        cfg, role, states = st.visible_states(user, request['sl_token'].get('max_role'))
         out = [st.serialize(s, cfg, role) for s in states]
         if q.get("domain"):
             out = [e for e in out if e["domain"] == q["domain"]]
@@ -146,7 +161,7 @@ class EntityView(_Base):
     name = "api:sentinel_link:entity"
 
     async def get(self, request: web.Request, entity_id: str) -> web.Response:
-        c = self._ctx(request)
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         hass, st, user, role = c
@@ -162,7 +177,7 @@ class CommandView(_Base):
     name = "api:sentinel_link:command"
 
     async def post(self, request: web.Request, entity_id: str) -> web.Response:
-        c = self._ctx(request)
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         hass, st, user, role = c
@@ -206,7 +221,7 @@ class SnapshotView(_Base):
     name = "api:sentinel_link:snapshot"
 
     async def get(self, request: web.Request, entity_id: str) -> web.Response:
-        c = self._ctx(request)
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         hass, st, user, role = c
@@ -229,11 +244,11 @@ class DevicesView(_Base):
     name = "api:sentinel_link:devices"
 
     async def get(self, request: web.Request) -> web.Response:
-        c = self._ctx(request)
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         hass, st, user, _role = c
-        _cfg, _r, states = st.visible_states(user)
+        _cfg, _r, states = st.visible_states(user, request['sl_token'].get('max_role'))
         from homeassistant.helpers import entity_registry as er
 
         entreg = er.async_get(hass)
@@ -259,11 +274,11 @@ class AreasView(_Base):
     name = "api:sentinel_link:areas"
 
     async def get(self, request: web.Request) -> web.Response:
-        c = self._ctx(request)
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         hass, st, user, _role = c
-        _cfg, _r, states = st.visible_states(user)
+        _cfg, _r, states = st.visible_states(user, request['sl_token'].get('max_role'))
         counts: dict[str, int] = {}
         for s in states:
             a = st.entity_ctx(s.entity_id).area_id
@@ -286,7 +301,7 @@ class EventsView(_Base):
     name = "api:sentinel_link:events"
 
     async def get(self, request: web.Request) -> web.StreamResponse:
-        c = self._ctx(request)
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         hass, st, user, role = c
@@ -317,10 +332,12 @@ class EventsView(_Base):
             "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no", "Connection": "keep-alive"})
         await resp.prepare(request)
-        sid = st.add_subscriber(user, send, close, domains, ents)
+        rec = request.get("sl_token") or {}
+        cap = rec.get("max_role")
+        sid = st.add_subscriber(user, send, close, domains, ents, token_id=rec.get("id"), cap=cap)
         try:
             if q.get("initial", "1") != "0":
-                cfg, role, states = st.visible_states(user)
+                cfg, role, states = st.visible_states(user, cap)
                 snap = [st.serialize(s, cfg, role) for s in states
                         if (not domains or s.domain in domains) and (not ents or s.entity_id in ents)]
                 await self._write(resp, "snapshot", {"entities": snap})
@@ -348,8 +365,8 @@ class AdminConfigView(_Base):
     url = f"{BASE}/admin/config"
     name = "api:sentinel_link:admin_config"
 
-    def _admin(self, request: web.Request):
-        c = self._ctx(request)
+    async def _admin(self, request: web.Request):
+        c = await self._ctx(request)
         if isinstance(c, web.Response):
             return c
         hass, st, user, role = c
@@ -358,13 +375,13 @@ class AdminConfigView(_Base):
         return hass, st, user, role
 
     async def get(self, request: web.Request) -> web.Response:
-        c = self._admin(request)
+        c = await self._admin(request)
         if isinstance(c, web.Response):
             return c
         return web.json_response(c[1].status(), headers=_JSON_HEADERS)
 
     async def put(self, request: web.Request) -> web.Response:
-        c = self._admin(request)
+        c = await self._admin(request)
         if isinstance(c, web.Response):
             return c
         _hass, st, user, role = c
@@ -388,7 +405,7 @@ class AdminAuditView(AdminConfigView):
     name = "api:sentinel_link:admin_audit"
 
     async def get(self, request: web.Request) -> web.Response:
-        c = self._admin(request)
+        c = await self._admin(request)
         if isinstance(c, web.Response):
             return c
         try:

@@ -4,16 +4,19 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from datetime import timedelta
 from typing import Any, Callable
 
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from . import commands as cmds
 from . import rbac
+from . import tokens as tok
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +64,10 @@ class ApiState:
         self._next_sub = 1
         self._unsub_bus: Callable[[], None] | None = None
         self.skip_reload = False  # set when an option change must not reload the entry
+        self.book = tok.TokenBook()          # OAuth apps, long-lived tokens, sessions
+        self.throttle = tok.Throttle()        # sign-in failure lockout
+        self.pending: dict[str, dict[str, Any]] = {}   # second-factor tickets (memory only)
+        self._unsub_sweep: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------ life
     async def async_load(self) -> None:
@@ -71,16 +78,21 @@ class ApiState:
         self.default_role = data.get("default_role") or None
         for item in data.get("audit") or []:
             self.audit.append(item)
+        self.book.load(data.get("auth"))
 
     @callback
     def async_start(self) -> None:
         self._unsub_bus = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_state_changed)
+        self._unsub_sweep = async_track_time_interval(self.hass, self._sweep, timedelta(seconds=60))
 
     @callback
     def async_stop(self) -> None:
         if self._unsub_bus:
             self._unsub_bus()
             self._unsub_bus = None
+        if self._unsub_sweep:
+            self._unsub_sweep()
+            self._unsub_sweep = None
         for sub in list(self.subscribers.values()):
             try:
                 sub["close"]()
@@ -99,6 +111,7 @@ class ApiState:
             "group_roles": self.group_roles,
             "default_role": self.default_role,
             "audit": list(self.audit),
+            "auth": self.book.to_dict(),
         }
 
     # ------------------------------------------------------------------ rbac
@@ -119,9 +132,60 @@ class ApiState:
             default_role=self.default_role,
         )
 
-    def role_for(self, user: Any) -> str | None:
+    def role_for(self, user: Any, cap: str | None = None) -> str | None:
+        """Current role of a hub user (read live), optionally lowered by a token's cap."""
         is_admin = bool(getattr(user, "is_admin", False) or getattr(user, "is_owner", False))
-        return self.rbac().resolve_role(user.id, is_admin, getattr(user, "group_ids", ()) or ())
+        role = self.rbac().resolve_role(user.id, is_admin, getattr(user, "group_ids", ()) or ())
+        return tok.effective_role(role, cap)
+
+    # ------------------------------------------------------------------ Link credentials
+    async def authenticate(self, token: str) -> tuple[Any, dict[str, Any], str | None] | None:
+        """Validate a Link bearer token -> (hub user, token record, effective role). Users and roles are read
+        LIVE from the hub, so removing/disabling a user or changing a role takes effect on the next call."""
+        rec = self.book.authenticate(token)
+        if rec is None:
+            return None
+        user = await self.hass.auth.async_get_user(rec["user_id"])
+        if user is None or not user.is_active or user.system_generated:
+            self.close_tokens(self.book.revoke_user(rec["user_id"]))
+            self.persist()
+            return None
+        return user, rec, self.role_for(user, rec.get("max_role"))
+
+    @callback
+    def persist(self) -> None:
+        self.book.dirty = False
+        self._schedule_save()
+
+    @callback
+    def close_tokens(self, token_ids: list[str]) -> None:
+        """Drop live streams that were opened with any of these (now revoked) tokens."""
+        ids = set(token_ids)
+        if not ids:
+            return
+        for sid, sub in list(self.subscribers.items()):
+            if sub.get("token_id") in ids:
+                try:
+                    sub["close"]()
+                except Exception:  # noqa: BLE001
+                    pass
+                self.subscribers.pop(sid, None)
+
+    async def _sweep(self, _now: Any = None) -> None:
+        """Every minute: expire tokens, revoke those of removed/disabled users, close their streams, flush to disk."""
+        self.book.purge()
+        users = {u.id: u for u in await self.hass.auth.async_get_users()}
+        owners = {r["user_id"] for r in list(self.book.tokens.values()) + list(self.book.access.values())}
+        for uid in owners:
+            u = users.get(uid)
+            if u is None or not u.is_active:
+                self.close_tokens(self.book.revoke_user(uid))
+        live = set(self.book.tokens) | set(self.book.access)
+        self.close_tokens([s["token_id"] for s in self.subscribers.values() if s.get("token_id") and s["token_id"] not in live])
+        for t in [t for t, p in self.pending.items() if p["exp"] < time.time()]:
+            self.pending.pop(t, None)
+        if self.book.dirty:
+            self.persist()
 
     def entity_ctx(self, entity_id: str) -> rbac.EntityCtx:
         ent = er.async_get(self.hass).async_get(entity_id)
@@ -166,9 +230,9 @@ class ApiState:
             out["commands"] = allowed
         return out
 
-    def visible_states(self, user: Any) -> tuple[rbac.RbacConfig, str | None, list[State]]:
+    def visible_states(self, user: Any, cap: str | None = None) -> tuple[rbac.RbacConfig, str | None, list[State]]:
         cfg = self.rbac()
-        role = self.role_for(user)
+        role = self.role_for(user, cap)
         if role is None:
             return cfg, role, []
         states = [s for s in self.hass.states.async_all() if cfg.can(role, self.entity_ctx(s.entity_id), rbac.READ)]
@@ -193,11 +257,13 @@ class ApiState:
 
     # ------------------------------------------------------------- realtime
     def add_subscriber(self, user: Any, send: Callable[[dict[str, Any]], None], close: Callable[[], None],
-                       domains: set[str] | None = None, entity_ids: set[str] | None = None) -> int:
+                       domains: set[str] | None = None, entity_ids: set[str] | None = None,
+                       token_id: str | None = None, cap: str | None = None) -> int:
         sid = self._next_sub
         self._next_sub += 1
         self.subscribers[sid] = {"user": user, "send": send, "close": close,
-                                 "domains": domains or set(), "entity_ids": entity_ids or set()}
+                                 "domains": domains or set(), "entity_ids": entity_ids or set(),
+                                 "token_id": token_id, "cap": cap}
         return sid
 
     def remove_subscriber(self, sid: int) -> None:
@@ -215,7 +281,7 @@ class ApiState:
         domain = entity_id.split(".", 1)[0]
         cfg = self.rbac()
         ctx = self.entity_ctx(entity_id)
-        by_user: dict[str, tuple[str | None, bool]] = {}
+        by_user: dict[tuple[str, str | None], tuple[str | None, bool]] = {}
         payloads: dict[str | None, dict[str, Any]] = {}
         for sub in list(self.subscribers.values()):
             if sub["domains"] and domain not in sub["domains"]:
@@ -223,10 +289,11 @@ class ApiState:
             if sub["entity_ids"] and entity_id not in sub["entity_ids"]:
                 continue
             user = sub["user"]
-            if user.id not in by_user:
-                role = self.role_for(user)
-                by_user[user.id] = (role, cfg.can(role, ctx, rbac.READ))
-            role, visible = by_user[user.id]
+            key = (user.id, sub.get("cap"))
+            if key not in by_user:
+                role = self.role_for(user, sub.get("cap"))
+                by_user[key] = (role, cfg.can(role, ctx, rbac.READ))
+            role, visible = by_user[key]
             if not visible:
                 continue
             if new is None:
@@ -260,6 +327,13 @@ class ApiState:
                 1 for s in self.hass.states.async_all() if cfg.exposure and rbac.is_exposed(cfg.exposure, self.entity_ctx(s.entity_id))
             ),
             "live_streams": len(self.subscribers),
+            "auth": {
+                "clients": len(self.book.clients),
+                "long_lived_tokens": sum(1 for t in self.book.tokens.values() if t["kind"] == tok.KIND_LONG),
+                "sessions": sum(1 for t in self.book.tokens.values() if t["kind"] == tok.KIND_REFRESH),
+            },
+            "authorize_path": "/api/sentinel_link/v1/auth/authorize",
+            "new_token_path": "/api/sentinel_link/v1/auth/new-token",
             "audit_entries": len(self.audit),
         }
 
