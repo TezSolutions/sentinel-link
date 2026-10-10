@@ -79,3 +79,8 @@ def test_bridge_uses_link_allowlist():
         assert False
     except br2.CommandError as e:
         assert e.code == "unknown_command"
+
+
+def test_brand_frigate_to_ainvr():
+    assert eu.brand("Frigate") == "AINVR" and eu.brand("frigate ") == "AINVR"
+    assert eu.brand("Sonos") == "Sonos" and eu.brand(None) is None and eu.brand("My Frigate cam") == "My Frigate cam"

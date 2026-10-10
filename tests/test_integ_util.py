@@ -75,3 +75,8 @@ def test_entry_view_hides_reason_when_ok_and_scrubs_when_not():
     off = iu.entry_view("sonos", "Sonos", "not_loaded", None, False, 0, 0, True, "e3", "zeroconf", True)
     assert off["disabled"] and not off["can_reload"] and not off["can_reconfigure"]
     assert iu.entry_view("zzz_unknown", "", "loaded", None, False, 0, 0, False, "e4", "user", False)["name"] == "Zzz Unknown"
+
+
+def test_frigate_is_shown_as_ainvr():
+    v = iu.entry_view("frigate", "127.0.0.1:5000", "loaded", None, False, 1, 1, True, "e", "user", False)
+    assert v["name"] == "AINVR" and "rigate" not in v["name"]
