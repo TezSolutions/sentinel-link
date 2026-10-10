@@ -18,7 +18,7 @@ Off by default. Set a target and the script reports progress by itself:
     NOTIFY_CMD='mail -s regression me@x.com' ...                # alternative: any command reading the message on stdin
     HEARTBEAT=300                                               # seconds between "still running" messages inside a long suite (0 = off)
 
-Messages: start (with time estimate), `[n/total] suite OK: x/x passed (time)` per suite, `FAILED [n/total] suite` at once with the FAIL
+Messages: start (with time estimate and finish time in IST), `[n/total] suite OK: x/x passed - ran 1m23s + 1m05s pause, 6m40s elapsed, ETA 9m10s (~09:41 IST)` per suite (run time, pacing pause and elapsed are shown separately; the ETA is the average finished-step time x steps left), `FAILED [n/total] suite` at once with the FAIL
 lines, `...still running` heartbeats, and a final ALL GREEN / FAILED summary of every suite. A sender that fails never fails the run.
 Run it detached (`nohup ... &` or tmux) so a closed session does not kill it.
 

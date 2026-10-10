@@ -21,17 +21,21 @@ notify() {  # notify "message"
   if [ -n "${NOTIFY_CMD:-}" ]; then printf '%s\n' "$1" | timeout 60 sh -c "$NOTIFY_CMD" >/dev/null 2>&1 || true
   else timeout 60 hermes send -q --to "$NOTIFY_TO" "$1" >/dev/null 2>&1 || true; fi
 }
+eta() {  # eta <steps-done> <total>: average time per finished step x steps left
+  local d=$1 t=$2 el=$(( $(date +%s) - T0 )); [ "$d" -ge "$t" ] && return 0
+  local left=$(( (el / d) * (t - d) )); printf 'ETA %s (~%s IST)' "$(fmt $left)" "$(TZ=Asia/Kolkata date -d "@$(( $(date +%s) + left ))" +%H:%M)"
+}
 fmt() { printf '%dm%02ds' $(($1/60)) $(($1%60)); }
 T0=$(date +%s); NODE="$HOST"
 NETFLAG="--no-net-apply"; [ $NET = 1 ] && NETFLAG=""
 SUITES=("e2e_users.py" "e2e_integrations.py $NETFLAG" "e2e_areas.py" "e2e_devices.py" "e2e_scenes.py" "e2e_system.py" "e2e_setup.py" "e2e_portal.py" "e2e_linkapi.py")
 TOTAL=$(( ${#SUITES[@]} + 1 )); [ $QUICK = 1 ] && TOTAL=1
 SUMMARY=""; DONE=0
-notify "Regression started on $NODE: $TOTAL step(s), about $(( QUICK==1 ? 1 : (${#SUITES[@]} * (PAUSE + 70)) / 60 )) min."
+notify "Regression started on $NODE: $TOTAL step(s), about $(( QUICK==1 ? 1 : (${#SUITES[@]} * (PAUSE + 40)) / 60 )) min, ETA ~$(TZ=Asia/Kolkata date -d "@$(( T0 + ${#SUITES[@]} * (PAUSE + 40) ))" +%H:%M) IST."
 
-echo "== unit tests"; UOUT=$($PY -m pytest tests -q 2>&1 | tail -1); echo "$UOUT"
+echo "== unit tests"; U0=$(date +%s); UOUT=$($PY -m pytest tests -q 2>&1 | tail -1); echo "$UOUT"
 DONE=1
-if echo "$UOUT" | grep -qE "failed|error"; then FAIL=1; notify "FAILED [1/$TOTAL] unit tests on $NODE: $UOUT"; else SUMMARY="unit: $UOUT"; notify "[1/$TOTAL] unit tests OK: $UOUT"; fi
+if echo "$UOUT" | grep -qE "failed|error"; then FAIL=1; notify "FAILED [1/$TOTAL] unit tests on $NODE: $UOUT"; else SUMMARY="unit: $UOUT"; notify "[1/$TOTAL] unit tests OK: $UOUT - ran $(fmt $(( $(date +%s) - U0 ))), est. total $(fmt $(( (${#SUITES[@]} * (PAUSE + 40)) + 5 ))) (finish ~$(TZ=Asia/Kolkata date -d "@$(( T0 + ${#SUITES[@]} * (PAUSE + 40) + 5 ))" +%H:%M) IST)"; fi
 if [ $QUICK = 1 ]; then
   [ $FAIL = 0 ] && notify "Regression ALL GREEN on $NODE ($(fmt $(( $(date +%s) - T0 ))))" || notify "REGRESSION FAILED on $NODE"
   exit $FAIL
@@ -42,10 +46,10 @@ for t in "${SUITES[@]}"; do
   set -- $t; f=$1; shift; extra="$*"
   [ "$f" = e2e_linkapi.py ] && extra="https"
   name=${f#e2e_}; name=${name%.py}; DONE=$((DONE+1))
-  echo "== $f"; sleep "$PAUSE"
-  S0=$(date +%s)
+  echo "== $f"; P0=$(date +%s); sleep "$PAUSE"
+  S0=$(date +%s); PAUSED=$(( S0 - P0 ))
   if [ "$HEARTBEAT" -gt 0 ] 2>/dev/null && { [ -n "${NOTIFY_CMD:-}" ] || [ -n "${NOTIFY_TO:-}" ]; }; then
-    ( while sleep "$HEARTBEAT"; do notify "...still running: $name ($DONE/$TOTAL), $(fmt $(( $(date +%s) - S0 ))) in this suite, $(fmt $(( $(date +%s) - T0 ))) total"; done ) &
+    ( while sleep "$HEARTBEAT"; do notify "...still running: $name ($DONE/$TOTAL), $(fmt $(( $(date +%s) - S0 ))) in this suite, $(fmt $(( $(date +%s) - T0 ))) elapsed, $(eta $((DONE-1)) $TOTAL)"; done ) &
     HB=$!
   else HB=""; fi
   out=$(timeout 600 $PY tests/$f "$HOST" "$ADMIN" $extra 2>&1); rc=$?
@@ -53,10 +57,10 @@ for t in "${SUITES[@]}"; do
   echo "$out" | grep -E "FAIL|passed|Traceback"
   res=$(echo "$out" | grep -E "^[0-9]+/[0-9]+ passed" | tail -1)
   if [ -n "$res" ] && ! echo "$out" | grep -qE "^FAIL|Traceback" && [ $rc = 0 ]; then
-    SUMMARY="$SUMMARY, $name $res"; notify "[$DONE/$TOTAL] $name OK: $res ($(fmt $(( $(date +%s) - S0 ))))"
+    SUMMARY="$SUMMARY, $name $res"; notify "[$DONE/$TOTAL] $name OK: $res - ran $(fmt $(( $(date +%s) - S0 ))) + $(fmt $PAUSED) pause, $(fmt $(( $(date +%s) - T0 ))) elapsed$([ $DONE -lt $TOTAL ] && echo ", $(eta $DONE $TOTAL)")"
   else
     FAIL=1; bad=$(echo "$out" | grep -E "^FAIL|Traceback|Error" | head -6 | cut -c1-160)
-    SUMMARY="$SUMMARY, $name FAILED"; notify "FAILED [$DONE/$TOTAL] $name on $NODE (exit $rc):
+    SUMMARY="$SUMMARY, $name FAILED"; notify "FAILED [$DONE/$TOTAL] $name on $NODE after $(fmt $(( $(date +%s) - S0 ))) (exit $rc, $(fmt $(( $(date +%s) - T0 ))) elapsed):
 ${bad:-no result line, see run log}"
   fi
 done
