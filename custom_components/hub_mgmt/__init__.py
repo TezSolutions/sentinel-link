@@ -40,7 +40,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from . import areas, entities, integrations, scenes, system, training, user_util, users
+from . import areas, entities, integrations, scenes, setup, system, training, user_util, users
 
 DOMAIN = "hub_mgmt"
 CONF_ALLOWED = "allowed_users"
@@ -83,8 +83,8 @@ STORED_ROLES = ("installer", "homeowner", "manager", "operator", "viewer")
 #   entities = entity settings + control, areas = areas/floors/labels, integrations = add/reconfigure + network,
 #   scenes = scenes and simple rules, system = settings/backup/updates/logs/break-glass, profile = own account + 2FA
 CAPS = {
-    "admin": {"devices", "users", "entities", "areas", "integrations", "scenes", "system", "profile"},
-    "installer": {"devices", "entities", "areas", "integrations", "scenes", "profile"},
+    "admin": {"devices", "users", "entities", "areas", "integrations", "scenes", "system", "setup", "profile"},
+    "installer": {"devices", "entities", "areas", "integrations", "scenes", "setup", "profile"},
     "homeowner": {"users", "entities", "areas", "scenes", "profile"},
 }
 # which target roles a caller may assign / remove / reset ("user" = no role)
@@ -232,7 +232,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 ws_users_list, ws_user_create, ws_user_remove,
                 ws_user_password, ws_user_set_role):
         websocket_api.async_register_command(hass, cmd)
-    for cmd in (*training.COMMANDS, *entities.COMMANDS, *areas.COMMANDS, *users.COMMANDS, *integrations.COMMANDS, *scenes.COMMANDS, *system.COMMANDS):
+    for cmd in (*training.COMMANDS, *entities.COMMANDS, *areas.COMMANDS, *users.COMMANDS, *integrations.COMMANDS, *scenes.COMMANDS, *system.COMMANDS, *setup.COMMANDS):
         websocket_api.async_register_command(hass, cmd)
 
     frontend_dir = Path(__file__).parent / "frontend"

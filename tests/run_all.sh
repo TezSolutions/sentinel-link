@@ -12,7 +12,7 @@ echo "== unit tests"; $PY -m pytest tests -q 2>&1 | tail -1 | tee /dev/stderr | 
 [ $QUICK = 1 ] && exit $FAIL
 [ -z "${HA_UI_PASS:-}" ] && echo "HA_UI_PASS not set: e2e suites need the admin password" >&2 && exit 2
 NETFLAG="--no-net-apply"; [ $NET = 1 ] && NETFLAG=""
-for t in "e2e_users.py" "e2e_integrations.py $NETFLAG" "e2e_areas.py" "e2e_devices.py" "e2e_scenes.py" "e2e_system.py" "e2e_portal.py" "e2e_linkapi.py"; do
+for t in "e2e_users.py" "e2e_integrations.py $NETFLAG" "e2e_areas.py" "e2e_devices.py" "e2e_scenes.py" "e2e_system.py" "e2e_setup.py" "e2e_portal.py" "e2e_linkapi.py"; do
   set -- $t; f=$1; shift; extra="$*"
   [ "$f" = e2e_linkapi.py ] && extra="https"
   echo "== $f"; sleep "$PAUSE"
