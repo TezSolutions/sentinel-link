@@ -11,6 +11,17 @@ What it covers: Link API (RBAC, OAuth, SSE/WS), portal login + two-step, devices
 scenes/rules, System (settings, backups, logs). Rules: throwaway users and virtual template switches only; never real devices;
 a real restore or restart is never run; always clean up in `finally`.
 
+## Status updates while it runs
+Off by default. Set a target and the script reports progress by itself:
+
+    NOTIFY_TO=whatsapp tests/run_all.sh <node> admin            # `hermes send --to whatsapp` (home chat); or whatsapp:+91..., telegram:..., email
+    NOTIFY_CMD='mail -s regression me@x.com' ...                # alternative: any command reading the message on stdin
+    HEARTBEAT=300                                               # seconds between "still running" messages inside a long suite (0 = off)
+
+Messages: start (with time estimate), `[n/total] suite OK: x/x passed (time)` per suite, `FAILED [n/total] suite` at once with the FAIL
+lines, `...still running` heartbeats, and a final ALL GREEN / FAILED summary of every suite. A sender that fails never fails the run.
+Run it detached (`nohup ... &` or tmux) so a closed session does not kill it.
+
 ## Keeping it current (do this with every feature or update)
 1. New command/page -> add unit tests (`test_*_util.py`) and an `e2e_<feature>.py` that covers allowed AND forbidden roles.
 2. A suite that fails after a stack/OS/hub update is either a real regression (fix the stack) or an intended change (fix the test, say why in the commit).
