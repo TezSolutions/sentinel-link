@@ -71,6 +71,24 @@ async def main():
                 st, d2 = await ws(adm, type="hub_mgmt/user_remove", user_id=u["id"]); print("cleanup", u.get("username"), d2.get("ok"))
         r = await adm.post(B + "/portal/logout", headers=H, ssl=False)
         r = await adm.get(B + "/data/current.json", ssl=False); ok("logout ends session", r.status in (401, 403), r.status)
+    # one user can never fill the session table: after 8 logins the oldest session is evicted, new logins still work
+    jars = []
+    try:
+        for _ in range(10):
+            j = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)); jars.append(j)
+            st, _me = await login(j, ADMIN, P)
+            if st == 429:
+                await asyncio.sleep(70); st, _me = await login(j, ADMIN, P)
+            ok("repeat login #%d accepted (never 503)" % len(jars), st == 200, st)
+        r = await jars[0].get(B + "/portal/me", ssl=False); ok("oldest of 10 sessions was evicted (limit 8 per user)", r.status in (401, 403), r.status)
+        r = await jars[-1].get(B + "/portal/me", ssl=False); ok("newest session still valid", r.status == 200, r.status)
+    finally:
+        for j in jars:
+            try:
+                await j.post(B + "/portal/logout", headers=H, ssl=False)
+            except Exception:
+                pass
+            await j.close()
     print(f"\n{sum(R)}/{len(R)} passed")
     sys.exit(0 if all(R) else 1)
 
