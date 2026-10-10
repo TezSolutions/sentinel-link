@@ -111,6 +111,9 @@ async def main():
             st = (await a.call(type="sentinel_link/status"))["result"]
             ok("status: enabled by default", st.get("enabled") is True, st.get("enabled"))
             ok("status: version", st.get("integration_version") == MANIFEST_VERSION, st.get("integration_version"))
+            lu = st.get("local_urls")
+            ok("status: local_urls lists the node's LAN address(es)", isinstance(lu, list) and len(lu) >= 1 and all(re.fullmatch(r"https://(10|192\.168|172\.(1[6-9]|2\d|3[01]))\.[0-9.]+/api/sentinel_link/v1", u) for u in lu), lu)
+            ok("status: local_urls never lists VPN, container or loopback addresses", not any(re.search(r"//(127\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.1[78]\.)", u) for u in (lu or [])), lu)
             # remove leftovers of an earlier failed run, so a retry always starts clean
             ul0 = (await a.call(type="hub_mgmt/users_list"))["result"]
             for u in (ul0["users"] if isinstance(ul0, dict) else ul0):

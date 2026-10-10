@@ -15,6 +15,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from . import commands as cmds
+from . import netaddr
 from . import rbac
 from . import tokens as tok
 
@@ -316,6 +317,7 @@ class ApiState:
             "integration_version": self.version,
             "node_id": self.node_id,
             "base_path": "/api/sentinel_link/v1",
+            "local_urls": [u + "/api/sentinel_link/v1" for u in netaddr.local_urls(netaddr.local_addresses(netaddr.read_adapters()))],
             "docs_path": "/api/sentinel_link/v1/docs",
             "openapi_path": "/api/sentinel_link/v1/openapi.json",
             "exposure": self.exposure,
