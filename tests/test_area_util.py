@@ -1,7 +1,7 @@
 """Unit tests for hub_mgmt_work/area_util.py."""
 import importlib.util, pathlib, sys
 
-HM = pathlib.Path.home() / "hub_mgmt_work"
+HM = pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "hub_mgmt"
 spec = importlib.util.spec_from_file_location("area_util_t", HM / "area_util.py")
 au = importlib.util.module_from_spec(spec)
 sys.modules["area_util_t"] = au

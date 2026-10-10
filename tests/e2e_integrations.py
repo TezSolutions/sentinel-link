@@ -8,7 +8,7 @@ import aiohttp
 
 HOST, ADMIN = sys.argv[1], sys.argv[2]
 NET_APPLY = "--no-net-apply" not in sys.argv
-P = re.search(r'^\s*export\s+HA_UI_PASS=(["\']?)(.*?)\1\s*$', open(os.path.expanduser("~/.bashrc")).read(), re.M).group(2)
+P = (os.environ.get("HA_UI_PASS") or re.search(r'^\s*export\s+HA_UI_PASS=(["\']?)(.*?)\1\s*$', open(os.path.expanduser("~/.bashrc")).read(), re.M).group(2))
 PW = "Tmp-" + uuid.uuid4().hex[:14] + "-Aa1"
 B = f"https://{HOST}"
 R = []

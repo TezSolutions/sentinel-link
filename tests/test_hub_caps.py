@@ -1,7 +1,7 @@
 """Capability matrix tests (parses CAPS/MANAGEABLE from __init__.py without importing the hub core)."""
 import ast, pathlib
 
-SRC = (pathlib.Path.home() / "hub_mgmt_work" / "__init__.py").read_text()
+SRC = (pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "hub_mgmt" / "__init__.py").read_text()
 
 
 def _const(name):

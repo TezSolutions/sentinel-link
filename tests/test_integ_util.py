@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-spec = importlib.util.spec_from_file_location("integ_util_t", pathlib.Path.home() / "hub_mgmt_work" / "integ_util.py")
+spec = importlib.util.spec_from_file_location("integ_util_t", pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "hub_mgmt" / "integ_util.py")
 iu = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(iu)
 

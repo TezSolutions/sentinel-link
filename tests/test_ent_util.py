@@ -1,7 +1,7 @@
 """Unit tests for hub_mgmt_work/ent_util.py and its agreement with the Link API rules."""
 import importlib.util, pathlib, sys
 
-HM = pathlib.Path.home() / "hub_mgmt_work"
+HM = pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "hub_mgmt"
 SL = pathlib.Path(__file__).parents[1] / "custom_components" / "sentinel_link" / "api"
 
 

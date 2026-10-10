@@ -8,7 +8,7 @@ import aiohttp
 HOST, ADMIN = sys.argv[1], sys.argv[2]
 SCHEME = sys.argv[3] if len(sys.argv) > 3 else "http"
 txt = open(os.path.expanduser("~/.bashrc")).read()
-APASS = re.search(r'^\s*export\s+HA_UI_PASS=(["\']?)(.*?)\1\s*$', txt, re.M).group(2)
+APASS = (os.environ.get("HA_UI_PASS") or re.search(r'^\s*export\s+HA_UI_PASS=(["\']?)(.*?)\1\s*$', txt, re.M).group(2))
 TPASS = "Tmp-" + uuid.uuid4().hex[:14]
 BASE = f"{SCHEME}://{HOST}"
 # like a real third-party app: its own https client id (HA refuses a bare-IP https client id)

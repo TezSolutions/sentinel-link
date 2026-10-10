@@ -206,7 +206,7 @@ def test_api_docs_have_no_home_assistant_wording():
 
 def test_portal_source_has_no_home_assistant_wording():
     import pathlib
-    root = pathlib.Path.home() / "tez-sentinel-image" / "portal-ui" / "src"
+    root = pathlib.Path(__import__("os").environ.get("IMAGE_REPO") or (pathlib.Path.home() / "tez-sentinel-image")) / "portal-ui" / "src"
     if not root.exists():
         return
     bad = [str(f) for f in root.rglob("*") if f.is_file() and "home assistant" in f.read_text().lower()]

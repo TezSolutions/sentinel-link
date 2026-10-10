@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-spec = importlib.util.spec_from_file_location("scene_util_t", pathlib.Path.home() / "hub_mgmt_work" / "scene_util.py")
+spec = importlib.util.spec_from_file_location("scene_util_t", pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "hub_mgmt" / "scene_util.py")
 su = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(su)
 

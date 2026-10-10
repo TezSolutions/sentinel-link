@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-SRC = pathlib.Path.home() / "tez-sentinel-image" / "provision" / "tez-net"
+SRC = pathlib.Path(__import__("os").environ.get("IMAGE_REPO") or (pathlib.Path.home() / "tez-sentinel-image")) / "provision" / "tez-net"
 
 
 def load(env):

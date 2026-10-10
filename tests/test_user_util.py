@@ -5,7 +5,7 @@ import pathlib
 
 import pytest
 
-spec = importlib.util.spec_from_file_location("user_util_t", pathlib.Path.home() / "hub_mgmt_work" / "user_util.py")
+spec = importlib.util.spec_from_file_location("user_util_t", pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "hub_mgmt" / "user_util.py")
 uu = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(uu)
 

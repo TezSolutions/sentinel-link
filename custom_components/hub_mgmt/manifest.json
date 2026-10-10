@@ -1,0 +1,11 @@
+{
+  "domain": "hub_mgmt",
+  "name": "Hub Mgmt",
+  "version": "0.9.0",
+  "documentation": "https://tezsolutions.in",
+  "dependencies": ["http", "frontend", "panel_custom", "websocket_api"],
+  "after_dependencies": ["mqtt", "matter", "zha"],
+  "codeowners": [],
+  "requirements": [],
+  "iot_class": "local_push"
+}
