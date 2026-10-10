@@ -61,7 +61,7 @@ def control_allowed(role: str, domain: str, platform: str | None) -> tuple[bool,
     """May a portal user of `role` (admin/installer/homeowner) operate this entity? Returns (ok, reason)."""
     if domain in HARD_DENY_DOMAINS or (platform, domain) in HARD_DENY_PLATFORM_DOMAIN:
         return False, "This entity cannot be controlled from the portal"
-    if domain in SENSITIVE_DOMAINS and role not in ("admin", "homeowner"):
+    if domain in SENSITIVE_DOMAINS and role not in ("admin", "superadmin", "homeowner"):
         return False, "Only an administrator or home owner can operate locks and alarms"
     return True, ""
 

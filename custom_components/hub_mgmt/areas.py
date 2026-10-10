@@ -414,7 +414,7 @@ def ws_bulk_assign(hass, connection, msg):
         return
     role = _role(hass, connection.user)
     from . import ent_util as eu
-    if any(e.entity_id.split(".", 1)[0] in eu.HARD_DENY_DOMAINS for e in ents) and role != "admin":
+    if any(e.entity_id.split(".", 1)[0] in eu.HARD_DENY_DOMAINS for e in ents) and role not in ("admin", "superadmin"):
         connection.send_error(msg["id"], "forbidden", "Only an administrator can change those entities")
         return
     for d in devs:

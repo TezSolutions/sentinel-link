@@ -242,7 +242,7 @@ def ws_entity_update(hass, connection, msg):
         connection.send_error(msg["id"], "not_found", "Unknown entity")
         return
     domain = ent.entity_id.split(".", 1)[0]
-    if domain in eu.HARD_DENY_DOMAINS and _role(hass, connection.user) != "admin":
+    if domain in eu.HARD_DENY_DOMAINS and _role(hass, connection.user) not in ("admin", "superadmin"):
         connection.send_error(msg["id"], "forbidden", "Only an administrator can change this entity")
         return
     kw: dict[str, Any] = {}

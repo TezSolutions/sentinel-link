@@ -43,8 +43,8 @@ async def main():
     created = []
     async with jar() as adm:
         st, me = await login(adm, ADMIN, P); ok("admin login", st == 200 and me.get("role") == "admin", (st, me))
-        r = await adm.get(B + "/data/current.json", ssl=False); j = await r.json()
-        ok("admin gets live dashboard data", r.status == 200 and "cpu" in str(j).lower()[:3000], r.status)
+        r = await adm.get(B + "/data/basic.json", ssl=False); j = await r.json()
+        ok("admin gets live dashboard data (service level)", r.status == 200 and "cpu" in str(j).lower()[:3000], r.status)
         ok("dashboard: no secret values in payload", P not in str(j) and not re.search(r"tskey-|BEGIN [A-Z ]*PRIVATE|access_token", str(j), re.I))
         for role, u in (("installer", "e2einst"), ("homeowner", "e2ehome"), ("operator", "e2eoper")):
             st, d = await ws(adm, type="hub_mgmt/user_create", name=u, username=u, password=TP, role=role)

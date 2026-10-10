@@ -40,12 +40,13 @@ from homeassistant.helpers import (
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from . import areas, entities, integrations, scenes, setup, system, training, user_util, users
+from . import areas, debug, entities, integrations, scenes, setup, system, training, user_util, users
 
 DOMAIN = "hub_mgmt"
 CONF_ALLOWED = "allowed_users"
 CONF_MANAGERS = "homeowners"
 CONF_TRAINERS = "trainers"
+CONF_SUPERADMINS = "superadmins"   # vendor accounts (Tez Solutions); only root can add one, by editing configuration.yaml
 Z2M_BASE = "zigbee2mqtt"
 PANEL_URL = "hub-mgmt"
 _LOGGER = logging.getLogger(__name__)
@@ -53,7 +54,8 @@ _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = vol.Schema(
     {DOMAIN: vol.Schema({vol.Optional(CONF_ALLOWED, default=[]): [cv.string],
                 vol.Optional(CONF_MANAGERS, default=[]): [cv.string],
-                vol.Optional(CONF_TRAINERS, default=[]): [cv.string]})},
+                vol.Optional(CONF_TRAINERS, default=[]): [cv.string],
+                vol.Optional(CONF_SUPERADMINS, default=[]): [cv.string]})},
     extra=vol.ALLOW_EXTRA,
 )
 
@@ -82,13 +84,18 @@ STORED_ROLES = ("installer", "homeowner", "manager", "operator", "viewer")
 # Portal capability matrix (approved 2026-10-10). Every portal command re-checks its cap server-side.
 #   entities = entity settings + control, areas = areas/floors/labels, integrations = add/reconfigure + network,
 #   scenes = scenes and simple rules, system = settings/backup/updates/logs/break-glass, profile = own account + 2FA
+#   debug = download the support bundle (service-level, no container names); infra = container-level detail + full bundle (superadmin only)
+_ADMIN_CAPS = {"devices", "users", "entities", "areas", "integrations", "scenes", "system", "setup", "debug", "profile"}
 CAPS = {
-    "admin": {"devices", "users", "entities", "areas", "integrations", "scenes", "system", "setup", "profile"},
+    "superadmin": _ADMIN_CAPS | {"infra"},
+    "admin": set(_ADMIN_CAPS),
     "installer": {"devices", "entities", "areas", "integrations", "scenes", "setup", "profile"},
     "homeowner": {"users", "entities", "areas", "scenes", "profile"},
 }
+ADMIN_ROLES = ("admin", "superadmin")
 # which target roles a caller may assign / remove / reset ("user" = no role)
 MANAGEABLE = {
+    "superadmin": {"user", *STORED_ROLES},
     "admin": {"user", *STORED_ROLES},
     "homeowner": {"user", "manager", "operator", "viewer"},
 }
@@ -96,7 +103,8 @@ MANAGEABLE = {
 
 def _role(hass, user) -> str:
     if user.is_owner or user.is_admin:
-        return "admin"
+        # the vendor account is an HA administrator that is ALSO listed under hub_mgmt: superadmins (root-edited config only)
+        return "superadmin" if user.id in hass.data[DOMAIN].get("superadmins", ()) else "admin"
     return hass.data[DOMAIN]["user_roles"].get(user.id, "user")
 
 
@@ -164,6 +172,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         "allowed": conf.get(CONF_ALLOWED, []),
         "managers": conf.get(CONF_MANAGERS, []),
         "trainers": conf.get(CONF_TRAINERS, []),
+        "superadmins": list(conf.get(CONF_SUPERADMINS, [])),
         "bridge_state": "unknown",
         "permit_join_end": None,  # epoch seconds
         "events": deque(maxlen=30),
@@ -232,7 +241,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 ws_users_list, ws_user_create, ws_user_remove,
                 ws_user_password, ws_user_set_role):
         websocket_api.async_register_command(hass, cmd)
-    for cmd in (*training.COMMANDS, *entities.COMMANDS, *areas.COMMANDS, *users.COMMANDS, *integrations.COMMANDS, *scenes.COMMANDS, *system.COMMANDS, *setup.COMMANDS):
+    for cmd in (*training.COMMANDS, *entities.COMMANDS, *areas.COMMANDS, *users.COMMANDS, *integrations.COMMANDS, *scenes.COMMANDS, *system.COMMANDS, *setup.COMMANDS, *debug.COMMANDS):
         websocket_api.async_register_command(hass, cmd)
 
     frontend_dir = Path(__file__).parent / "frontend"
@@ -772,9 +781,12 @@ async def ws_users_list(hass, connection, msg):
         for k in stale:
             st["user_roles"].pop(k, None)
         await _save(hass)
+    am_super = _role(hass, connection.user) == "superadmin"
     for u in all_users:
         if u.system_generated:
             continue
+        if not am_super and _role(hass, u) == "superadmin":
+            continue  # the vendor account is not shown to the customer's administrators
         users.append(
             {
                 "id": u.id,
@@ -789,7 +801,7 @@ async def ws_users_list(hass, connection, msg):
                 "assignable": _removable_user(hass, u, connection.user),
             }
         )
-    order = ("admin", "installer", "homeowner", "manager", "operator", "viewer", "user")
+    order = ("superadmin", "admin", "installer", "homeowner", "manager", "operator", "viewer", "user")
     users.sort(key=lambda x: (order.index(x["role"]) if x["role"] in order else 99, (x["name"] or "").lower()))
     connection.send_result(msg["id"], {"users": users, "assignable": sorted(_manageable_roles(hass, connection.user) - {"user"})})
 

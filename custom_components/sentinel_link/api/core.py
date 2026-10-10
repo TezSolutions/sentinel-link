@@ -341,8 +341,9 @@ class ApiState:
 
     def users_overview(self, users: list[Any]) -> list[dict[str, Any]]:
         out = []
+        vendor = set((self.hass.data.get("hub_mgmt") or {}).get("superadmins", ()))  # the vendor account is not listed for the customer
         for u in users:
-            if not u.is_active or u.system_generated:
+            if not u.is_active or u.system_generated or u.id in vendor:
                 continue
             out.append({"id": u.id, "name": u.name, "is_admin": bool(u.is_admin or u.is_owner),
                         "role": self.role_for(u)})

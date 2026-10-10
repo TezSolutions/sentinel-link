@@ -283,7 +283,7 @@ async def _target(hass, connection, msg):
 async def ws_user_detail(hass, connection, msg):
     from . import _ha_username, _removable_user
     user = await hass.auth.async_get_user(msg["user_id"])
-    if user is None or user.system_generated:
+    if user is None or user.system_generated or (_role(hass, user) == "superadmin" and _role(hass, connection.user) != "superadmin"):
         connection.send_error(msg["id"], "not_found", "Unknown user")
         return
     manageable = _removable_user(hass, user, connection.user)
