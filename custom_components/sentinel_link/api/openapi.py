@@ -264,7 +264,9 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
                 "Info": {"type": "object", "properties": {
                     "name": {"type": "string"}, "api_version": {"type": "string"}, "integration_version": {"type": "string"},
                     "node_id": {"type": "string"}, "enabled": {"type": "boolean"},
-                    "docs": {"type": "string"}, "openapi": {"type": "string"}, "realtime": {"type": "object"}}},
+                    "docs": {"type": "string"}, "openapi": {"type": "string"}, "realtime": {"type": "object"},
+                    "discovery": {"type": "object", "description": "LAN announcement: DNS-SD service type and port", "properties": {
+                        "service": {"type": "string", "example": "_sentinel._tcp"}, "port": {"type": "integer", "example": 443}}}}},
                 "Me": {"type": "object", "properties": {
                     "user_id": {"type": "string"}, "name": {"type": "string"},
                     "role": {"type": "string"}, "is_admin": {"type": "boolean"}}},
