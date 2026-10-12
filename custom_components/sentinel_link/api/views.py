@@ -84,6 +84,7 @@ class InfoView(HomeAssistantView):
             "auth": {"type": "oauth2_pkce+bearer", "authorize": f"{BASE}/auth/authorize", "token": f"{BASE}/auth/token",
                      "revoke": f"{BASE}/auth/revoke", "tokens": f"{BASE}/auth/tokens", "new_token_page": f"{BASE}/auth/new-token"},
             "realtime": {"websocket": f"{BASE}/ws", "sse": f"{BASE}/events"},
+            "discovery": {"service": "_sentinel._tcp", "port": 443},
         }, headers=_JSON_HEADERS)
 
 

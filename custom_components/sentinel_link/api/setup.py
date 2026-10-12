@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.components import websocket_api
 
+from . import discovery
 from .core import API_DATA, ApiState
 from .tokens import Throttle as tok_throttle
 from .auth import AUTH_VIEWS
@@ -31,6 +32,10 @@ async def async_setup_api(hass: HomeAssistant, entry: ConfigEntry, cfg: dict[str
     await st.async_load()
     hass.data[API_DATA] = st
     st.async_start()
+    if enabled:
+        await discovery.async_register(hass, version)
+    else:
+        await discovery.async_unregister(hass)
     if not hass.data.get(_REGISTERED):
         for view in (*ALL_VIEWS, *AUTH_VIEWS):
             hass.http.register_view(view)
@@ -46,6 +51,7 @@ async def async_setup_api(hass: HomeAssistant, entry: ConfigEntry, cfg: dict[str
 
 
 async def async_unload_api(hass: HomeAssistant) -> None:
+    await discovery.async_unregister(hass)
     st: ApiState | None = hass.data.pop(API_DATA, None)
     if st is not None:
         st.async_stop()
@@ -75,3 +81,7 @@ async def async_set_enabled(hass: HomeAssistant, enabled: bool) -> None:
     if entry is not None:
         st.skip_reload = True
         hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_API_ENABLED: enabled})
+    if enabled:
+        await discovery.async_register(hass, st.version)
+    else:
+        await discovery.async_unregister(hass)
