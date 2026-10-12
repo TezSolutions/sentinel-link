@@ -86,9 +86,13 @@ class ApiState:
         self._unsub_bus = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_state_changed)
         self._unsub_sweep = async_track_time_interval(self.hass, self._sweep, timedelta(seconds=60))
         self._unsub_users = self.hass.bus.async_listen("hub_mgmt_user_changed", self._on_user_changed)
+        self._unsub_logins = self.hass.bus.async_listen("hub_mgmt_login", self._on_login)
 
     @callback
     def async_stop(self) -> None:
+        if getattr(self, "_unsub_logins", None):
+            self._unsub_logins()
+            self._unsub_logins = None
         if self._unsub_bus:
             self._unsub_bus()
             self._unsub_bus = None
@@ -326,6 +330,32 @@ class ApiState:
                     sub["send"](msg)
                 except Exception:  # noqa: BLE001
                     _LOGGER.debug("realtime send failed", exc_info=True)
+
+    @callback
+    def _on_login(self, event: Event) -> None:
+        """Sign-in history -> realtime `login` event (and `login_alert` when it triggers an alert), each subscriber getting only what
+        they may read: homeowner/admin/vendor see everybody's, everyone else only their own.  Passwords/tokens are never in an entry."""
+        if not self.enabled or not self.subscribers:
+            return
+        svc = (self.hass.data.get("hub_mgmt") or {}).get("logins")
+        if svc is None:
+            return
+        e, alerts = event.data.get("entry"), event.data.get("alerts") or []
+        if not e:
+            return
+        for sub in list(self.subscribers.values()):
+            try:
+                u = sub["user"]
+                hub_role = svc.role_of(u)
+                link_role = self.role_for(u, sub.get("cap"))
+                if not svc.log.visible(e, u.id, hub_role, link_role):
+                    continue
+                p = svc.log.present(e, hub_role)
+                sub["send"]({"type": "login", "entry": p})
+                if alerts and svc.log.scope_for(hub_role, link_role) == "all":
+                    sub["send"]({"type": "login_alert", "kinds": alerts, "entry": p})
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("realtime send failed", exc_info=True)
 
     # --------------------------------------------------------------- status
     def status(self) -> dict[str, Any]:

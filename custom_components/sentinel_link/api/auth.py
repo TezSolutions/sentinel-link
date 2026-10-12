@@ -34,6 +34,17 @@ MAX_BODY = 8192
 
 
 # ------------------------------------------------------------------------------------------------ helpers
+def _hist(hass: HomeAssistant):
+    return (hass.data.get("hub_mgmt") or {}).get("logins")
+
+
+async def _record(hass: HomeAssistant, request: web.Request, door: str, outcome: str, *, user: Any = None, username: str | None = None) -> None:
+    """Sign-in history (shared with the portal and the hub's own sign-in).  Never raises: history must not break a sign-in."""
+    svc = _hist(hass)
+    if svc is not None:
+        await svc.record(user=user, username=username, door=door, outcome=outcome, ip=_ip(request), ua=request.headers.get("User-Agent"))
+
+
 def _ip(request: web.Request) -> str:
     """Client address for lockout keys. Behind the node's nginx every request comes from the proxy, so nginx passes the
     real address in X-Sentinel-Client-IP; it is honoured only when the connection itself is local/private. (A spoofed
@@ -204,31 +215,36 @@ class AuthorizeView(HomeAssistantView):
             t = st.pending.get(ticket)
             if not t or t["exp"] < time.time() or t["client_id"] != p["client_id"] or t["challenge"] != p["code_challenge"]:
                 return _page("Sign in", _login_form(name, p, "That sign-in expired. Start again."), 400)
-            if st.throttle.locked(f"u:{t['user_id']}") or st.throttle.locked(f"ip:{ip}"):
-                return _page("Sign in", _login_form(name, p, "Too many attempts. Try again later."), 429)
             user = await hass.auth.async_get_user(t["user_id"])
+            if st.throttle.locked(f"u:{t['user_id']}") or st.throttle.locked(f"ip:{ip}"):
+                await _record(hass, request, "link_app", "blocked", user=user)
+                return _page("Sign in", _login_form(name, p, "Too many attempts. Try again later."), 429)
             module = hass.auth.get_auth_mfa_module(t["module"])
             ok = bool(user and module and await module.async_validate(user.id, {"code": f.get("code", "").strip()}))
             if not ok:
                 st.throttle.fail(f"u:{t['user_id']}")
                 st.throttle.fail(f"ip:{ip}")
                 st.log(user, None, "auth:mfa", p["client_id"], "failed")
+                await _record(hass, request, "link_app", "wrong_2fa", user=user)
                 st.persist()
                 hidden = {**p, "ticket": ticket}
                 return _page("Two-step verification", _mfa_form(hidden, "That code is not right."), 401)
             st.pending.pop(ticket, None)
+            await _record(hass, request, "link_app", "success", user=user)
             return self._finish(st, user, p)
 
         # ---- step 1: username + password
         username, password = f.get("username", "").strip(), f.get("password", "")
         ukey = f"u:{username.casefold()}"
         if st.throttle.locked(ukey) or st.throttle.locked(f"ip:{ip}"):
+            await _record(hass, request, "link_app", "blocked", username=username)
             return _page("Sign in", _login_form(name, p, "Too many attempts. Try again later."), 429)
         user, why = await check_password(hass, username, password)
         if user is None:
             st.throttle.fail(ukey)
             st.throttle.fail(f"ip:{ip}")
             st.log(None, None, "auth:login", p["client_id"], "failed", {"username": username[:40]})
+            await _record(hass, request, "link_app", "blocked" if why == "inactive" else "wrong_password", username=username)
             st.persist()
             msg = "This account is disabled." if why == "inactive" else "Wrong username or password."
             return _page("Sign in", _login_form(name, p, msg), 401)
@@ -240,6 +256,7 @@ class AuthorizeView(HomeAssistantView):
             st.pending[tk] = {"user_id": user.id, "client_id": p["client_id"], "challenge": p["code_challenge"],
                               "module": module_id, "exp": time.time() + _TICKET_TTL}
             return _page("Two-step verification", _mfa_form({**p, "ticket": tk}))
+        await _record(hass, request, "link_app", "success", user=user)
         return self._finish(st, user, p)
 
     def _finish(self, st: ApiState, user: Any, p: dict[str, str]) -> web.Response:
@@ -469,17 +486,20 @@ class NewTokenView(HomeAssistantView):
         username = f.get("username", "").strip()
         ukey = f"u:{username.casefold()}"
         if st.throttle.locked(ukey) or st.throttle.locked(f"ip:{ip}"):
+            await _record(hass, request, "link_token", "blocked", username=username)
             return _page("New token", self._form_html("Too many attempts. Try again later."), 429)
         user, why = await check_password(hass, username, f.get("password", ""))
         if user is None:
             st.throttle.fail(ukey)
             st.throttle.fail(f"ip:{ip}")
             st.log(None, None, "auth:login", "new-token", "failed", {"username": username[:40]})
+            await _record(hass, request, "link_token", "blocked" if why == "inactive" else "wrong_password", username=username)
             st.persist()
             return _page("New token", self._form_html("Wrong username or password."), 401)
         if await mfa_modules(hass, user):
             return _page("New token", self._form_html("This account uses two-step verification. Create the token through the API with an app session instead."), 400)
         st.throttle.ok(ukey)
+        await _record(hass, request, "link_token", "success", user=user)
         role = st.role_for(user)
         if role is None:
             return _page("New token", self._form_html("This account has no API access."), 403)

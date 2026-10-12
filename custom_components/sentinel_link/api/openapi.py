@@ -109,7 +109,9 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
             f"{BASE}/events": {"get": {
                 "tags": ["Realtime"], "summary": "Server-Sent Events stream of state changes",
                 "description": ("`text/event-stream`. Events: `snapshot` (first, if `initial=1`), `state`, `removed`, "
-                                "`resync` (client was too slow - re-fetch `/entities`). A `: ping` comment is sent every 20 s. "
+                                "`resync` (client was too slow - re-fetch `/entities`). Administrators also get `user` events; every user gets `login` events for the sign-ins they may read "
+                                "(home owner / administrator / support: everyone's; others: their own) and, when allowed to see everybody's, `login_alert` events "
+                                "(kinds: failed, new_ip, support). A `: ping` comment is sent every 20 s. "
                                 "Max 5 concurrent streams per user. Reverse proxies must not buffer this route."),
                 "parameters": [
                     {"name": "domains", "in": "query", "description": "Comma-separated filter", "schema": {"type": "string"}},
@@ -165,9 +167,35 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
             f"{BASE}/ws": {"get": {
                 "tags": ["Realtime"], "summary": "WebSocket stream (upgrade request)", "security": [],
                 "description": "Messages: server `auth_required` -> client `{type:auth, access_token}` -> `auth_ok` -> client "
-                               "`{type:subscribe, domains?, entity_ids?, initial?}` -> `subscribed`, `snapshot`, then `state` / `removed` events (administrators also get `user` events: created, removed, role_changed, ...) "
+                               "`{type:subscribe, domains?, entity_ids?, initial?}` -> `subscribed`, `snapshot`, then `state` / `removed` events (administrators also get `user` events: created, removed, role_changed, ...; everyone gets `login` / `login_alert` events within their sign-in-history scope) "
                                "events. Client may send `{type:ping}`. Closed with code 4004 when the token is revoked.",
                 "responses": {"101": {"description": "Switching protocols"}}}},
+            f"{BASE}/logins": {
+                "get": {"tags": ["Sign-in history"], "summary": "Sign-in history (audit / compliance)",
+                        "description": ("Every sign-in attempt on every door (portal, hub, app sign-in, token page) and every support-file download. "
+                                        "Home owner, administrators and support see EVERYONE's entries (administrators included); everyone else, and any token capped "
+                                        "below `manager`, sees only their own. The Tez Solutions support account appears as `Tez Solutions support`. "
+                                        "Entries are hash-chained (`integrity`) and cannot be edited or deleted. No passwords, tokens or 2FA codes are stored."),
+                        "parameters": [
+                            {"name": "user", "in": "query", "schema": {"type": "string"}, "description": "username, display name or user id"},
+                            {"name": "door", "in": "query", "schema": {"type": "string", "enum": ["portal", "hub", "link_app", "link_token", "support"]}},
+                            {"name": "outcome", "in": "query", "schema": {"type": "string", "enum": ["success", "wrong_password", "wrong_2fa", "blocked", "downloaded"]}},
+                            {"name": "since", "in": "query", "schema": {"type": "number"}, "description": "unix seconds"},
+                            {"name": "until", "in": "query", "schema": {"type": "number"}},
+                            {"name": "alerts_only", "in": "query", "schema": {"type": "boolean"}, "description": "only entries that raised a flag (new_ip, failed_burst, support, bundle)"},
+                            {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100}},
+                            {"name": "before", "in": "query", "schema": {"type": "integer"}, "description": "page: pass `next_before` from the previous reply"}],
+                        "responses": {"200": ok("LoginList"), "400": _err("Bad query"), "401": _err("Not signed in")}}},
+            f"{BASE}/logins/summary": {
+                "get": {"tags": ["Sign-in history"], "summary": "Counts for the last 24 h / 7 days (same scope rules) and your last sign-in",
+                        "responses": {"200": {"description": "Summary"}}}},
+            f"{BASE}/logins/settings": {
+                "get": {"tags": ["Sign-in history"], "summary": "Retention and alert settings (home owner, administrator, support)",
+                        "responses": {"200": ok("LoginSettings"), "403": _err("Not allowed")}},
+                "put": {"tags": ["Sign-in history"], "summary": "Change retention (>= 90 days) and alerts (home owner / administrator + scope `logins:settings`)",
+                        "description": "Support can read but never weaken these settings.",
+                        "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LoginSettings"}}}},
+                        "responses": {"200": ok("LoginSettings"), "400": _err("Invalid"), "403": _err("Not allowed / missing scope")}}},
             f"{BASE}/users": {
                 "get": {"tags": ["Users"], "summary": "List users (admin role)",
                         "description": "Same list the node portal shows. The vendor support account is never listed. `assignable` = roles you may give.",
@@ -237,6 +265,20 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
                     "role": {"type": "string", "description": "admin, installer, homeowner, manager, operator, viewer or user"},
                     "active": {"type": "boolean"}, "mfa": {"type": "boolean"}, "last_seen": {"type": "string", "nullable": True},
                     "removable": {"type": "boolean"}, "resettable": {"type": "boolean"}, "assignable": {"type": "boolean"}}},
+                "LoginEntry": {"type": "object", "properties": {
+                    "id": {"type": "integer"}, "seq": {"type": "integer"}, "ts": {"type": "number"}, "kind": {"type": "string", "enum": ["signin", "support_bundle"]},
+                    "user_id": {"type": "string", "nullable": True}, "username": {"type": "string", "nullable": True}, "name": {"type": "string"},
+                    "role": {"type": "string", "nullable": True, "description": "`support` for the Tez Solutions account when you are not support yourself"},
+                    "door": {"type": "string"}, "outcome": {"type": "string"}, "ip": {"type": "string", "nullable": True}, "device": {"type": "string"},
+                    "flags": {"type": "array", "items": {"type": "string", "enum": ["new_ip", "failed_burst", "support", "bundle"]}}}},
+                "LoginList": {"type": "object", "properties": {
+                    "logins": {"type": "array", "items": {"$ref": "#/components/schemas/LoginEntry"}}, "total": {"type": "integer"},
+                    "scope": {"type": "string", "enum": ["all", "own"]}, "next_before": {"type": "integer", "nullable": True},
+                    "integrity": {"type": "object", "properties": {"ok": {"type": "boolean"}, "entries": {"type": "integer"}}}, "retention_days": {"type": "integer"}}},
+                "LoginSettings": {"type": "object", "properties": {
+                    "retention_days": {"type": "integer", "minimum": 90}, "alerts": {"type": "object", "properties": {
+                        "failed": {"type": "boolean"}, "new_ip": {"type": "boolean"}, "support": {"type": "boolean"}}},
+                    "notify_services": {"type": "array", "items": {"type": "string"}, "description": "extra notify services, e.g. mobile_app_phone"}}},
                 "UserList": {"type": "object", "properties": {"users": {"type": "array", "items": {"$ref": "#/components/schemas/User"}},
                                                               "assignable": {"type": "array", "items": {"type": "string"}}}},
                 "UserCreate": {"type": "object", "required": ["name", "username", "password"], "properties": {

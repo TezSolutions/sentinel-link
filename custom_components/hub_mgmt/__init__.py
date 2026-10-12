@@ -40,6 +40,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
+from . import logins as logins_cmds
 from . import user_api, areas, debug, entities, integrations, scenes, setup, system, training, user_util, users
 
 DOMAIN = "hub_mgmt"
@@ -84,13 +85,14 @@ STORED_ROLES = ("installer", "homeowner", "manager", "operator", "viewer")
 # Portal capability matrix (approved 2026-10-10). Every portal command re-checks its cap server-side.
 #   entities = entity settings + control, areas = areas/floors/labels, integrations = add/reconfigure + network,
 #   scenes = scenes and simple rules, system = settings/backup/updates/logs/break-glass, profile = own account + 2FA
+#   logins = sign-in history (homeowner/admin/vendor: everybody's; others: their own)
 #   debug = download the support bundle (service-level, no container names); infra = container-level detail + full bundle (superadmin only)
-_ADMIN_CAPS = {"devices", "users", "entities", "areas", "integrations", "scenes", "system", "setup", "debug", "profile"}
+_ADMIN_CAPS = {"devices", "users", "entities", "areas", "integrations", "scenes", "system", "setup", "debug", "profile", "logins"}
 CAPS = {
     "superadmin": _ADMIN_CAPS | {"infra"},
     "admin": set(_ADMIN_CAPS),
-    "installer": {"devices", "entities", "areas", "integrations", "scenes", "setup", "profile"},
-    "homeowner": {"users", "entities", "areas", "scenes", "profile"},
+    "installer": {"devices", "entities", "areas", "integrations", "scenes", "setup", "profile", "logins"},
+    "homeowner": {"users", "entities", "areas", "scenes", "profile", "logins"},
 }
 ADMIN_ROLES = ("admin", "superadmin")
 # which target roles a caller may assign / remove / reset ("user" = no role)
@@ -192,6 +194,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data[DOMAIN] = state
     from .user_api import UserApi
     state["user_api"] = UserApi(hass)   # called in-process by the Link API (/users); same rules as the portal
+    from .login_service import LoginService, install_flow_hook
+    logins = LoginService(hass)
+    logins.node = hass.config.location_name or ""
+    await logins.async_load()
+    state["logins"] = logins            # sign-in history; recorded by the portal, the Link API sign-in pages and the hub's own sign-in flow
+    install_flow_hook(hass, logins)
+    async def _flush_logins(_event) -> None:
+        await logins.async_flush()
+
+    hass.bus.async_listen_once("homeassistant_stop", _flush_logins)
     if not saved.get("seeded"):
         await _save(hass)
 
@@ -243,7 +255,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 ws_users_list, ws_user_create, ws_user_remove,
                 ws_user_password, ws_user_set_role):
         websocket_api.async_register_command(hass, cmd)
-    for cmd in (*training.COMMANDS, *entities.COMMANDS, *areas.COMMANDS, *users.COMMANDS, *integrations.COMMANDS, *scenes.COMMANDS, *system.COMMANDS, *setup.COMMANDS, *debug.COMMANDS):
+    for cmd in (*training.COMMANDS, *entities.COMMANDS, *areas.COMMANDS, *users.COMMANDS, *integrations.COMMANDS, *scenes.COMMANDS, *system.COMMANDS, *setup.COMMANDS, *debug.COMMANDS, *logins_cmds.COMMANDS):
         websocket_api.async_register_command(hass, cmd)
 
     frontend_dir = Path(__file__).parent / "frontend"

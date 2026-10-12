@@ -565,5 +565,110 @@ class UserPasswordView(_UsersBase):
         return res if isinstance(res, web.Response) else web.json_response({"ok": True}, headers=_JSON_HEADERS)
 
 
-ALL_VIEWS = (UsersView, UserView, UserPasswordView, InfoView, OpenApiView, DocsView, MeView, EntitiesView, EntityView, CommandView, SnapshotView,
+# ---------------------------------------------------------------------------------------------------------------- sign-in history
+def _hist(hass: HomeAssistant):
+    return (hass.data.get("hub_mgmt") or {}).get("logins")
+
+
+class _LoginsBase(_Base):
+    """Sign-in history.  Everybody who can use the API may read it; WHAT they get is decided by the same rules as the portal:
+    home owner, administrator and the vendor see every account's entries (administrators included), everyone else only their own.
+    A token capped below `manager` also sees only its own user's entries.  Entries cannot be created, edited or deleted here."""
+
+    async def _hist_ctx(self, request: web.Request):
+        c = await self._ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        hass, st, user, role = c
+        svc = _hist(hass)
+        if svc is None:
+            return _err(501, "unavailable", "Sign-in history is not available on this node")
+        return hass, st, user, role, svc
+
+
+class LoginsView(_LoginsBase):
+    url = f"{BASE}/logins"
+    name = "api:sentinel_link:logins"
+
+    async def get(self, request: web.Request) -> web.Response:
+        c = await self._hist_ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        _hass, _st, user, role, svc = c
+        q = request.query
+        try:
+            num = lambda k: float(q[k]) if k in q else None  # noqa: E731
+            limit = int(q.get("limit", 100))
+            before = int(q["before"]) if "before" in q else None
+            since, until = num("since"), num("until")
+        except ValueError:
+            return _err(400, "invalid_query", "since, until, limit and before must be numbers")
+        if not 1 <= limit <= 1000:
+            return _err(400, "invalid_query", "limit must be 1-1000")
+        for key, allowed in (("door", svc.log.DOORS), ("outcome", svc.log.OUTCOMES)):
+            if key in q and q[key] not in allowed:
+                return _err(400, "invalid_query", f"{key} must be one of: {', '.join(allowed)}")
+        alerts_only = q.get("alerts_only", "").lower() in ("1", "true", "yes")
+        res = svc.log.query(user.id, svc.role_of(user), role, user=q.get("user"), door=q.get("door"), outcome=q.get("outcome"),
+                            since=since, until=until, alerts_only=alerts_only, limit=limit, before=before)
+        return web.json_response(res, headers=_JSON_HEADERS)
+
+
+class LoginsSummaryView(_LoginsBase):
+    url = f"{BASE}/logins/summary"
+    name = "api:sentinel_link:logins:summary"
+
+    async def get(self, request: web.Request) -> web.Response:
+        c = await self._hist_ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        _hass, _st, user, role, svc = c
+        return web.json_response(svc.log.summary(user.id, svc.role_of(user), role), headers=_JSON_HEADERS)
+
+
+class LoginsSettingsView(_LoginsBase):
+    url = f"{BASE}/logins/settings"
+    name = "api:sentinel_link:logins:settings"
+
+    async def get(self, request: web.Request) -> web.Response:
+        c = await self._hist_ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        _hass, _st, user, role, svc = c
+        if svc.log.scope_for(svc.role_of(user), role) != "all":
+            return _err(403, "forbidden", "Only the home owner, administrators and support can read these settings")
+        return web.json_response({**svc.log.settings, "min_retention_days": svc.log.MIN_RETENTION_DAYS,
+                                  "can_change": svc.role_of(user) in ("homeowner", "admin")}, headers=_JSON_HEADERS)
+
+    async def put(self, request: web.Request) -> web.Response:
+        c = await self._hist_ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role, svc = c
+        hub_role = svc.role_of(user)
+        if hub_role not in ("homeowner", "admin") or svc.log.scope_for(hub_role, role) != "all":
+            return _err(403, "forbidden", "Only the home owner and the administrator can change these settings")
+        if "logins:settings" not in ((request.get("sl_token") or {}).get("scopes") or []):
+            st.log(user, role, "logins:settings", request.path, "denied", {"reason": "missing scope"})
+            return _err(403, "missing_scope", "This token lacks the 'logins:settings' scope")
+        try:
+            b = await request.json()
+        except ValueError:
+            return _err(400, "invalid_body", "Body must be JSON")
+        if not isinstance(b, dict) or not b:
+            return _err(400, "invalid_body", "Body must be a non-empty object")
+        bad = sorted(set(b) - set(svc.log.DEFAULT_SETTINGS))
+        if bad:
+            return _err(400, "invalid_body", f"Unknown setting: {', '.join(bad)}")
+        new, errs = svc.log.set_settings(b)
+        if errs:
+            return _err(400, "invalid_body", "; ".join(errs))
+        svc._save()
+        st.log(user, role, "logins:settings", request.path, "ok", {"keys": sorted(b)})
+        st.persist()
+        return web.json_response({**new, "min_retention_days": svc.log.MIN_RETENTION_DAYS, "can_change": True}, headers=_JSON_HEADERS)
+
+
+
+ALL_VIEWS = (LoginsView, LoginsSummaryView, LoginsSettingsView, UsersView, UserView, UserPasswordView, InfoView, OpenApiView, DocsView, MeView, EntitiesView, EntityView, CommandView, SnapshotView,
              DevicesView, AreasView, EventsView, AdminConfigView, AdminAuditView)

@@ -35,7 +35,7 @@ MAX_CLIENTS = 50
 MAX_REDIRECTS = 10
 
 ROLE_RANK = {"viewer": 1, "operator": 2, "manager": 3, "admin": 4}
-SCOPES = ("users:write", "users:password")      # extra powers a token must be GRANTED; roles alone never give them
+SCOPES = ("users:write", "users:password", "logins:settings")      # extra powers a token must be GRANTED; roles alone never give them
 CAPPABLE = ("viewer", "operator", "manager")   # a token can be limited to these
 
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$")

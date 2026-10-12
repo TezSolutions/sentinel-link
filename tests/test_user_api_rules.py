@@ -61,7 +61,7 @@ def test_openapi_documents_users_endpoints():
 
 def test_item_routes_accept_their_path_variable():
     """The hub passes {user_id} to the handler as a keyword argument; a handler without it answers 500 (found live)."""
-    seg = VIEWS[VIEWS.index("class UserView("):VIEWS.index("ALL_VIEWS = (")]
+    seg = VIEWS[VIEWS.index("class UserView("):VIEWS.index("# ---------------------------------------------------------------------------------------------------------------- sign-in history")]
     handlers = re.findall(r"async def (get|patch|delete|post)\(self, request: web\.Request(?:, (\w+): str)?\)", seg)
     assert len(handlers) == 4, handlers
     assert all(arg == "user_id" for _m, arg in handlers), handlers

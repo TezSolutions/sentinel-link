@@ -38,7 +38,7 @@ def test_installer_cannot_touch_users_system_or_debug():
 
 
 def test_homeowner_scope():
-    assert CAPS["homeowner"] == {"users", "entities", "areas", "scenes", "profile"}
+    assert CAPS["homeowner"] == {"users", "entities", "areas", "scenes", "profile", "logins"}
     assert not ({"devices", "integrations", "system", "debug", "infra"} & CAPS["homeowner"])
 
 
@@ -63,3 +63,9 @@ def test_vendor_account_hidden_from_other_admins():
 
 def test_whoami_reports_caps():
     assert '"caps": sorted(CAPS.get(' in SRC
+
+
+def test_every_portal_role_has_the_sign_in_history_capability():
+    for role in ("superadmin", "admin", "installer", "homeowner"):
+        assert "logins" in CAPS[role], role
+    assert "logins" not in CAPS.get("viewer", set())      # roles without portal access never reach the commands at all
