@@ -85,6 +85,7 @@ class ApiState:
     def async_start(self) -> None:
         self._unsub_bus = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_state_changed)
         self._unsub_sweep = async_track_time_interval(self.hass, self._sweep, timedelta(seconds=60))
+        self._unsub_users = self.hass.bus.async_listen("hub_mgmt_user_changed", self._on_user_changed)
 
     @callback
     def async_stop(self) -> None:
@@ -94,6 +95,9 @@ class ApiState:
         if self._unsub_sweep:
             self._unsub_sweep()
             self._unsub_sweep = None
+        if getattr(self, "_unsub_users", None):
+            self._unsub_users()
+            self._unsub_users = None
         for sub in list(self.subscribers.values()):
             try:
                 sub["close"]()
@@ -307,6 +311,21 @@ class ApiState:
                 sub["send"](msg)
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("realtime send failed", exc_info=True)
+
+    @callback
+    def _on_user_changed(self, event: Event) -> None:
+        """User created / removed / role changed ... -> realtime event for ADMIN subscribers only."""
+        if not self.enabled or not self.subscribers:
+            return
+        d = event.data
+        msg = {"type": "user", "action": d.get("action"), "user_id": d.get("user_id"), "name": d.get("name"), "role": d.get("role")}
+        cfg = self.rbac()
+        for sub in list(self.subscribers.values()):
+            if cfg.is_admin_role(self.role_for(sub["user"], sub.get("cap"))):
+                try:
+                    sub["send"](msg)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("realtime send failed", exc_info=True)
 
     # --------------------------------------------------------------- status
     def status(self) -> dict[str, Any]:

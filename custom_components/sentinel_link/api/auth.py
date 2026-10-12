@@ -360,11 +360,16 @@ class TokensView(_Base):
         own_cap = (request.get("sl_token") or {}).get("max_role")
         if own_cap and (cap is None or tok.ROLE_RANK.get(cap, 99) > tok.ROLE_RANK[own_cap]):
             cap = own_cap
+        # scopes can only be passed on, never created: a token may grant at most the scopes it holds itself
+        want = body.get("scopes") or []
+        own_scopes = set((request.get("sl_token") or {}).get("scopes") or [])
+        if not isinstance(want, list) or not set(want) <= own_scopes:
+            return _err(403, "scope_escalation", "You can only grant scopes that your own token holds")
         rec, secret = st.book.create_long_lived(user.id, body.get("name", ""), expires_in_days=body.get("expires_in_days"),
-                                                max_role=cap, created_by=user.id)
+                                                max_role=cap, created_by=user.id, scopes=want)
         if rec is None:
             return _err(400, "validation_failed", "; ".join(secret))  # type: ignore[arg-type]
-        st.log(user, role, "auth:create_token", rec["id"], "ok", {"name": rec["name"], "max_role": rec["max_role"],
+        st.log(user, role, "auth:create_token", rec["id"], "ok", {"name": rec["name"], "max_role": rec["max_role"], "scopes": rec.get("scopes"),
                                                                    "expires": rec["expires"]})
         st.persist()
         out = st.book.public(rec)

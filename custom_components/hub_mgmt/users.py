@@ -22,6 +22,8 @@ from homeassistant.auth.const import GROUP_ID_ADMIN  # noqa: F401
 from . import user_util as uu
 from .entities import _audit, _cap, _role
 
+DOMAIN = "hub_mgmt"
+
 _LOGGER = logging.getLogger(__name__)
 _profile = _cap("profile", "Sign in first")
 _users = _cap("users", "Not allowed to manage users")
@@ -302,15 +304,12 @@ async def ws_user_detail(hass, connection, msg):
 @websocket_api.async_response
 @_users
 async def ws_user_rename(hass, connection, msg):
-    user = await _target(hass, connection, msg)
-    if user is None:
-        return
+    from .user_api import ApiError
     try:
-        name = uu.clean_display_name(msg["name"])
-    except uu.Bad as err:
-        return _bad(connection, msg, err)
-    await hass.auth.async_update_user(user, name=name)
-    _audit(hass, connection.user, "user_rename", user.id, "ok", {"name": name})
+        await hass.data[DOMAIN]["user_api"].rename(connection.user, msg["user_id"], msg["name"])
+    except ApiError as err:
+        return connection.send_error(msg["id"], err.code, err.message)
+    _audit(hass, connection.user, "user_rename", msg["user_id"], "ok", {"name": msg["name"]})
     connection.send_result(msg["id"], {"ok": True})
 
 
@@ -318,14 +317,12 @@ async def ws_user_rename(hass, connection, msg):
 @websocket_api.async_response
 @_users
 async def ws_user_set_active(hass, connection, msg):
-    user = await _target(hass, connection, msg)
-    if user is None:
-        return
-    if msg["active"]:
-        await hass.auth.async_activate_user(user)
-    else:
-        await hass.auth.async_deactivate_user(user)   # also drops every refresh token = signed out now
-    _audit(hass, connection.user, "user_enable" if msg["active"] else "user_disable", user.id, "ok", {"name": user.name})
+    from .user_api import ApiError
+    try:
+        await hass.data[DOMAIN]["user_api"].set_active(connection.user, msg["user_id"], msg["active"])
+    except ApiError as err:
+        return connection.send_error(msg["id"], err.code, err.message)
+    _audit(hass, connection.user, "user_enable" if msg["active"] else "user_disable", msg["user_id"], "ok")
     connection.send_result(msg["id"], {"ok": True})
 
 

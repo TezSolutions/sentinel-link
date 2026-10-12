@@ -56,7 +56,9 @@ def test_superadmin_is_derived_from_config_not_from_a_stored_role():
 
 
 def test_vendor_account_hidden_from_other_admins():
-    assert 'if not am_super and _role(hass, u) == "superadmin":' in SRC
+    seg = SRC[SRC.index("async def user_row("):]
+    seg = seg[:seg.index("return {")]
+    assert '_role(hass, u) == "superadmin" and _role(hass, caller) != "superadmin"' in seg and "return None" in seg
 
 
 def test_whoami_reports_caps():

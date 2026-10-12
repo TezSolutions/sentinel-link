@@ -165,9 +165,34 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
             f"{BASE}/ws": {"get": {
                 "tags": ["Realtime"], "summary": "WebSocket stream (upgrade request)", "security": [],
                 "description": "Messages: server `auth_required` -> client `{type:auth, access_token}` -> `auth_ok` -> client "
-                               "`{type:subscribe, domains?, entity_ids?, initial?}` -> `subscribed`, `snapshot`, then `state` / `removed` "
+                               "`{type:subscribe, domains?, entity_ids?, initial?}` -> `subscribed`, `snapshot`, then `state` / `removed` events (administrators also get `user` events: created, removed, role_changed, ...) "
                                "events. Client may send `{type:ping}`. Closed with code 4004 when the token is revoked.",
                 "responses": {"101": {"description": "Switching protocols"}}}},
+            f"{BASE}/users": {
+                "get": {"tags": ["Users"], "summary": "List users (admin role)",
+                        "description": "Same list the node portal shows. The vendor support account is never listed. `assignable` = roles you may give.",
+                        "responses": {"200": ok("UserList"), "403": _err("Admin only")}},
+                "post": {"tags": ["Users"], "summary": "Create a user (admin role + token scopes `users:write` and `users:password`)",
+                         "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UserCreate"}}}},
+                         "responses": {"201": {"description": "Created (returns the new id)"}, "400": _err("Validation failed / weak password"),
+                                       "403": _err("Missing scope or role not assignable"), "409": _err("Username taken")}}},
+            f"{BASE}/users/{{user_id}}": {
+                "parameters": [{"name": "user_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                "get": {"tags": ["Users"], "summary": "One user (admin role)", "responses": {"200": ok("User"), "404": _err("Unknown user")}},
+                "patch": {"tags": ["Users"], "summary": "Change name, role and/or active (scope `users:write`)",
+                          "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UserPatch"}}}},
+                          "responses": {"200": ok("User"), "400": _err("Validation failed"), "403": _err("Missing scope / cannot manage this account"),
+                                        "404": _err("Unknown user")}},
+                "delete": {"tags": ["Users"], "summary": "Delete a user (scope `users:write`)",
+                           "responses": {"204": {"description": "Deleted"}, "403": _err("Cannot manage this account"), "404": _err("Unknown user")}}},
+            f"{BASE}/users/{{user_id}}/password": {
+                "parameters": [{"name": "user_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                "post": {"tags": ["Users"], "summary": "Reset a password (scope `users:password`)",
+                         "description": "Signs the user out everywhere. The password policy of the portal applies.",
+                         "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["password"],
+                                                                                                         "properties": {"password": {"type": "string"}}}}}},
+                         "responses": {"200": {"description": "Changed"}, "400": _err("Weak password"), "403": _err("Missing scope / cannot manage"),
+                                       "404": _err("Unknown user")}}},
             f"{BASE}/admin/config": {
                 "get": {"tags": ["Admin"], "summary": "Exposure + role configuration (admin role)",
                         "responses": {"200": ok("AdminConfig"), "403": _err("Admin only")}},
@@ -207,6 +232,17 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
                 "Command": {"type": "object", "required": ["command"], "properties": {
                     "command": {"type": "string", "example": "turn_on"},
                     "data": {"type": "object", "example": {"brightness_pct": 60}}}},
+                "User": {"type": "object", "properties": {
+                    "id": {"type": "string"}, "name": {"type": "string"}, "username": {"type": "string", "nullable": True},
+                    "role": {"type": "string", "description": "admin, installer, homeowner, manager, operator, viewer or user"},
+                    "active": {"type": "boolean"}, "mfa": {"type": "boolean"}, "last_seen": {"type": "string", "nullable": True},
+                    "removable": {"type": "boolean"}, "resettable": {"type": "boolean"}, "assignable": {"type": "boolean"}}},
+                "UserList": {"type": "object", "properties": {"users": {"type": "array", "items": {"$ref": "#/components/schemas/User"}},
+                                                              "assignable": {"type": "array", "items": {"type": "string"}}}},
+                "UserCreate": {"type": "object", "required": ["name", "username", "password"], "properties": {
+                    "name": {"type": "string"}, "username": {"type": "string", "description": "3-32 chars: a-z 0-9 . _ -"},
+                    "password": {"type": "string"}, "role": {"type": "string", "default": "user"}}},
+                "UserPatch": {"type": "object", "properties": {"name": {"type": "string"}, "role": {"type": "string"}, "active": {"type": "boolean"}}},
                 "AdminConfig": {"type": "object"},
                 "TokenRequest": {"type": "object", "required": ["grant_type", "client_id"], "properties": {
                     "grant_type": {"type": "string", "enum": ["authorization_code", "refresh_token"]},

@@ -418,5 +418,152 @@ class AdminAuditView(AdminConfigView):
         return _err(405, "method_not_allowed", "GET only")
 
 
-ALL_VIEWS = (InfoView, OpenApiView, DocsView, MeView, EntitiesView, EntityView, CommandView, SnapshotView,
+
+# --------------------------------------------------------------------------- user management (admin role + token scopes)
+def _users_api(hass: HomeAssistant):
+    return (hass.data.get("hub_mgmt") or {}).get("user_api")
+
+
+class _UsersBase(_Base):
+    """Administrator only. Reads need the admin role; writes also need the token scope `users:write`
+    (`users:password` for passwords). The rules themselves live in hub_mgmt and are shared with the node portal."""
+
+    async def _users_ctx(self, request: web.Request, scope: str | None = None):
+        c = await self._ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        hass, st, user, role = c
+        if not st.rbac().is_admin_role(role):
+            return _err(403, "forbidden", "Admin role required")
+        if scope and scope not in ((request.get("sl_token") or {}).get("scopes") or []):
+            st.log(user, role, f"users:{scope.split(':')[1]}", request.path, "denied", {"reason": "missing scope"})
+            return _err(403, "missing_scope", f"This token lacks the '{scope}' scope")
+        api = _users_api(hass)
+        if api is None:
+            return _err(501, "unavailable", "User management is not available on this node")
+        return hass, st, user, role, api
+
+    @staticmethod
+    async def _json(request: web.Request):
+        try:
+            b = await request.json()
+        except ValueError:
+            return _err(400, "invalid_body", "Body must be JSON")
+        return b if isinstance(b, dict) else _err(400, "invalid_body", "Body must be an object")
+
+    @staticmethod
+    async def _run(st, user, role, action: str, target: str, coro, data: dict | None = None):
+        """Await a hub_mgmt user operation: audit it, turn its ApiError into the API's error shape."""
+        try:
+            res = await coro
+        except Exception as err:  # noqa: BLE001
+            if not (hasattr(err, "status") and hasattr(err, "code")):
+                raise
+            st.log(user, role, action, target, "denied" if err.status in (403, 404) else "error", {**(data or {}), "code": err.code})
+            return _err(err.status, err.code, err.message)
+        st.log(user, role, action, target, "ok", data)
+        st.persist()
+        return res
+
+
+class UsersView(_UsersBase):
+    url = f"{BASE}/users"
+    name = "api:sentinel_link:users"
+
+    async def get(self, request: web.Request) -> web.Response:
+        c = await self._users_ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        _hass, _st, user, _role, api = c
+        return web.json_response(await api.list(user), headers=_JSON_HEADERS)
+
+    async def post(self, request: web.Request) -> web.Response:
+        c = await self._users_ctx(request, "users:write")
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role, api = c
+        b = await self._json(request)
+        if isinstance(b, web.Response):
+            return b
+        if b.get("password") and "users:password" not in ((request.get("sl_token") or {}).get("scopes") or []):
+            return _err(403, "missing_scope", "Setting a password needs the 'users:password' scope")
+        res = await self._run(st, user, role, "users:create", str(b.get("username")), api.create(
+            user, name=b.get("name", ""), username=b.get("username", ""), password=b.get("password", ""), role=b.get("role", "user")),
+            {"username": b.get("username"), "role": b.get("role", "user")})
+        return res if isinstance(res, web.Response) else web.json_response(res, status=201, headers=_JSON_HEADERS)
+
+
+class UserView(_UsersBase):
+    url = f"{BASE}/users/{{user_id}}"
+    name = "api:sentinel_link:user"
+
+    async def get(self, request: web.Request) -> web.Response:
+        c = await self._users_ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role, api = c
+        try:
+            return web.json_response(await api.get(request.match_info["user_id"], user), headers=_JSON_HEADERS)
+        except Exception as err:  # noqa: BLE001
+            if not (hasattr(err, "status") and hasattr(err, "code")):
+                raise
+            return _err(err.status, err.code, err.message)
+
+    async def patch(self, request: web.Request) -> web.Response:
+        """Body: any of name, role, active. Everything is validated before anything is changed."""
+        c = await self._users_ctx(request, "users:write")
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role, api = c
+        b = await self._json(request)
+        if isinstance(b, web.Response):
+            return b
+        extra = set(b) - {"name", "role", "active"}
+        if extra or not b:
+            return _err(400, "validation_failed", "Send one or more of: name, role, active")
+        if "active" in b and not isinstance(b["active"], bool):
+            return _err(400, "validation_failed", "active must be true or false")
+        uid = request.match_info["user_id"]
+        try:
+            await api.get(uid, user)
+        except Exception as err:  # noqa: BLE001
+            if not (hasattr(err, "status") and hasattr(err, "code")):
+                raise
+            return _err(err.status, err.code, err.message)
+        for key, op in (("role", lambda: api.set_role(user, uid, b["role"])), ("name", lambda: api.rename(user, uid, b["name"])),
+                        ("active", lambda: api.set_active(user, uid, b["active"]))):
+            if key in b:
+                res = await self._run(st, user, role, f"users:{key}", uid, op(), {key: b[key]})
+                if isinstance(res, web.Response):
+                    return res
+        return web.json_response(await api.get(uid, user), headers=_JSON_HEADERS)
+
+    async def delete(self, request: web.Request) -> web.Response:
+        c = await self._users_ctx(request, "users:write")
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role, api = c
+        uid = request.match_info["user_id"]
+        res = await self._run(st, user, role, "users:delete", uid, api.remove(user, uid))
+        return res if isinstance(res, web.Response) else web.Response(status=204, headers=_JSON_HEADERS)
+
+
+class UserPasswordView(_UsersBase):
+    url = f"{BASE}/users/{{user_id}}/password"
+    name = "api:sentinel_link:user_password"
+
+    async def post(self, request: web.Request) -> web.Response:
+        c = await self._users_ctx(request, "users:password")
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role, api = c
+        b = await self._json(request)
+        if isinstance(b, web.Response):
+            return b
+        uid = request.match_info["user_id"]
+        res = await self._run(st, user, role, "users:password", uid, api.set_password(user, uid, b.get("password", "")))
+        return res if isinstance(res, web.Response) else web.json_response({"ok": True}, headers=_JSON_HEADERS)
+
+
+ALL_VIEWS = (UsersView, UserView, UserPasswordView, InfoView, OpenApiView, DocsView, MeView, EntitiesView, EntityView, CommandView, SnapshotView,
              DevicesView, AreasView, EventsView, AdminConfigView, AdminAuditView)

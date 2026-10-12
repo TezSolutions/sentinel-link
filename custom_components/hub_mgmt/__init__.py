@@ -40,7 +40,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from . import areas, debug, entities, integrations, scenes, setup, system, training, user_util, users
+from . import user_api, areas, debug, entities, integrations, scenes, setup, system, training, user_util, users
 
 DOMAIN = "hub_mgmt"
 CONF_ALLOWED = "allowed_users"
@@ -190,6 +190,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             roles.setdefault(uid, "installer")
     state["user_roles"] = roles
     hass.data[DOMAIN] = state
+    from .user_api import UserApi
+    state["user_api"] = UserApi(hass)   # called in-process by the Link API (/users); same rules as the portal
     if not saved.get("seeded"):
         await _save(hass)
 
@@ -768,6 +770,28 @@ async def _mfa_flag(hass, user) -> bool:
     return bool(mod and await mod.async_is_user_setup(user.id))
 
 
+async def user_row(hass, u, caller) -> dict | None:
+    """One user as the portal and the Link API show it, or None if `caller` may not see it
+    (system users; the vendor account is hidden from everyone but the vendor)."""
+    if u.system_generated:
+        return None
+    if _role(hass, u) == "superadmin" and _role(hass, caller) != "superadmin":
+        return None
+    removable = _removable_user(hass, u, caller)
+    return {
+        "id": u.id,
+        "name": u.name,
+        "username": _ha_username(u),
+        "active": u.is_active,
+        "mfa": await _mfa_flag(hass, u),
+        "last_seen": user_util.newest(t.last_used_at for t in u.refresh_tokens.values() if t.token_type == "normal"),
+        "role": _role(hass, u),
+        "removable": removable,
+        "resettable": removable and bool(_ha_username(u)),
+        "assignable": removable,
+    }
+
+
 @websocket_api.websocket_command({vol.Required("type"): "hub_mgmt/users_list"})
 @websocket_api.async_response
 @_manager_only
@@ -781,26 +805,10 @@ async def ws_users_list(hass, connection, msg):
         for k in stale:
             st["user_roles"].pop(k, None)
         await _save(hass)
-    am_super = _role(hass, connection.user) == "superadmin"
     for u in all_users:
-        if u.system_generated:
-            continue
-        if not am_super and _role(hass, u) == "superadmin":
-            continue  # the vendor account is not shown to the customer's administrators
-        users.append(
-            {
-                "id": u.id,
-                "name": u.name,
-                "username": _ha_username(u),
-                "active": u.is_active,
-                "mfa": await _mfa_flag(hass, u),
-                "last_seen": user_util.newest(t.last_used_at for t in u.refresh_tokens.values() if t.token_type == "normal"),
-                "role": _role(hass, u),
-                "removable": _removable_user(hass, u, connection.user),
-                "resettable": _removable_user(hass, u, connection.user) and bool(_ha_username(u)),
-                "assignable": _removable_user(hass, u, connection.user),
-            }
-        )
+        row = await user_row(hass, u, connection.user)
+        if row is not None:
+            users.append(row)
     order = ("superadmin", "admin", "installer", "homeowner", "manager", "operator", "viewer", "user")
     users.sort(key=lambda x: (order.index(x["role"]) if x["role"] in order else 99, (x["name"] or "").lower()))
     connection.send_result(msg["id"], {"users": users, "assignable": sorted(_manageable_roles(hass, connection.user) - {"user"})})
@@ -818,44 +826,13 @@ async def ws_users_list(hass, connection, msg):
 @websocket_api.async_response
 @_manager_only
 async def ws_user_create(hass, connection, msg):
-    """Create a NON-ADMIN user with a local login. HA group is always plain user;
-    the caller may only grant roles in its own manageable set."""
-    if msg["role"] not in _manageable_roles(hass, connection.user):
-        connection.send_error(msg["id"], "forbidden", f"You cannot create a '{msg['role']}'")
-        return
-    username = msg["username"]
+    """Create a NON-ADMIN user with a local login (rules in user_api.py, shared with the Link API)."""
     try:
-        user_util.check_password(msg["password"], username, msg["name"])
-    except user_util.Bad as err:
-        connection.send_error(msg["id"], "weak_password", str(err))
+        res = await hass.data[DOMAIN]["user_api"].create(connection.user, name=msg["name"], username=msg["username"], password=msg["password"], role=msg["role"])
+    except user_api.ApiError as err:
+        connection.send_error(msg["id"], err.code, err.message)
         return
-    if not USERNAME_RE.match(username):
-        connection.send_error(
-            msg["id"], "invalid_username", "Username: 3-32 chars, letters, digits, . _ -"
-        )
-        return
-    provider = auth_ha.async_get_provider(hass)
-    try:
-        await provider.async_add_auth(username, msg["password"])
-    except auth_ha.InvalidUser:
-        connection.send_error(msg["id"], "username_taken", "That username is already in use")
-        return
-    try:
-        user = await hass.auth.async_create_user(msg["name"], group_ids=[GROUP_ID_USER])
-        creds = await provider.async_get_or_create_credentials({"username": username})
-        await hass.auth.async_link_user(user, creds)
-    except Exception as err:  # noqa: BLE001 - roll back the login we just added
-        try:
-            await provider.async_remove_auth(username)
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception("rollback of auth for %s failed", username)
-        connection.send_error(msg["id"], "create_failed", str(err))
-        return
-    if msg["role"] != "user":
-        hass.data[DOMAIN]["user_roles"][user.id] = msg["role"]
-        await _save(hass)
-    _LOGGER.info("%s created user %s (%s) role=%s", connection.user.name, msg["name"], username, msg["role"])
-    connection.send_result(msg["id"], {"id": user.id})
+    connection.send_result(msg["id"], res)
 
 
 @websocket_api.websocket_command(
@@ -864,20 +841,11 @@ async def ws_user_create(hass, connection, msg):
 @websocket_api.async_response
 @_manager_only
 async def ws_user_remove(hass, connection, msg):
-    user = await hass.auth.async_get_user(msg["user_id"])
-    if user is None:
-        connection.send_error(msg["id"], "not_found", "Unknown user")
+    try:
+        await hass.data[DOMAIN]["user_api"].remove(connection.user, msg["user_id"])
+    except user_api.ApiError as err:
+        connection.send_error(msg["id"], err.code, err.message)
         return
-    if not _removable_user(hass, user, connection.user):
-        connection.send_error(
-            msg["id"], "forbidden", "Only regular users can be removed here"
-        )
-        return
-    name = user.name
-    await hass.auth.async_remove_user(user)
-    if hass.data[DOMAIN]["user_roles"].pop(user.id, None) is not None:
-        await _save(hass)
-    _LOGGER.info("%s removed user %s", connection.user.name, name)
     connection.send_result(msg["id"], {"ok": True})
 
 
@@ -891,29 +859,12 @@ async def ws_user_remove(hass, connection, msg):
 @websocket_api.async_response
 @_manager_only
 async def ws_user_password(hass, connection, msg):
-    """Reset the password of a regular user. Admins/installers/homeowners are excluded."""
-    user = await hass.auth.async_get_user(msg["user_id"])
-    if user is None:
-        connection.send_error(msg["id"], "not_found", "Unknown user")
-        return
-    username = _ha_username(user)
-    if not _removable_user(hass, user, connection.user) or not username:
-        connection.send_error(
-            msg["id"], "forbidden", "Passwords can only be reset for regular users"
-        )
-        return
+    """Reset the password of an account the caller manages."""
     try:
-        user_util.check_password(msg["password"], username, user.name or "")
-    except user_util.Bad as err:
-        connection.send_error(msg["id"], "weak_password", str(err))
+        await hass.data[DOMAIN]["user_api"].set_password(connection.user, msg["user_id"], msg["password"])
+    except user_api.ApiError as err:
+        connection.send_error(msg["id"], err.code, err.message)
         return
-    try:
-        await auth_ha.async_get_provider(hass).async_change_password(username, msg["password"])
-    except auth_ha.InvalidUser:
-        connection.send_error(msg["id"], "not_found", "No local login for this user")
-        return
-    users._drop_other_sessions(hass, user, None)
-    _LOGGER.info("%s reset the password of %s", connection.user.name, user.name)
     connection.send_result(msg["id"], {"ok": True})
 
 
@@ -927,20 +878,10 @@ async def ws_user_password(hass, connection, msg):
 @websocket_api.async_response
 @_manager_only
 async def ws_user_set_role(hass, connection, msg):
-    """Change a user's role. Both the current and the new role must be in the
-    caller's manageable set; HA admins / the caller / system users are immune."""
-    user = await hass.auth.async_get_user(msg["user_id"])
-    if user is None:
-        connection.send_error(msg["id"], "not_found", "Unknown user")
+    """Change a user's role (current and new role must be in the caller's manageable set)."""
+    try:
+        await hass.data[DOMAIN]["user_api"].set_role(connection.user, msg["user_id"], msg["role"])
+    except user_api.ApiError as err:
+        connection.send_error(msg["id"], err.code, err.message)
         return
-    if not _removable_user(hass, user, connection.user) or msg["role"] not in _manageable_roles(hass, connection.user):
-        connection.send_error(msg["id"], "forbidden", "You cannot assign that role to this user")
-        return
-    roles = hass.data[DOMAIN]["user_roles"]
-    if msg["role"] == "user":
-        roles.pop(user.id, None)
-    else:
-        roles[user.id] = msg["role"]
-    await _save(hass)
-    _LOGGER.info("%s set role of %s to %s", connection.user.name, user.name, msg["role"])
     connection.send_result(msg["id"], {"ok": True})

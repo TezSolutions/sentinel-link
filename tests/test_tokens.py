@@ -187,3 +187,38 @@ def test_throttle_locks_and_expires():
     assert not t.fail("u", 61)
     t.ok("u")
     assert not t.fail("u", 62) and not t.fail("u", 63)
+
+
+# ---------------------------------------------------------------- scopes (users:write / users:password)
+def test_token_has_no_scopes_by_default():
+    rec, _tok = book_with_app().create_long_lived("u1", "panel")
+    assert rec["scopes"] == [] and T.TokenBook.public(rec)["scopes"] == []
+
+
+def test_scopes_are_stored_sorted_and_deduplicated():
+    rec, _t = book_with_app().create_long_lived("u1", "cloud", scopes=["users:write", "users:password", "users:write"])
+    assert rec["scopes"] == ["users:password", "users:write"]
+
+
+@pytest.mark.parametrize("bad", [["admin"], ["users:*"], ["users:write", "root"]])
+def test_unknown_scope_refused(bad):
+    rec, errs = book_with_app().create_long_lived("u1", "x", scopes=bad)
+    assert rec is None and any("scopes" in e for e in errs)
+
+
+def test_scopes_survive_persistence_and_authenticate():
+    b = book_with_app()
+    rec, tok = b.create_long_lived("u1", "cloud", scopes=["users:write"])
+    b2 = T.TokenBook(); b2.load(json.loads(json.dumps(b.to_dict())))
+    got = b2.authenticate(tok)
+    assert got and got["scopes"] == ["users:write"]
+
+
+def test_oauth_session_tokens_carry_no_scopes():
+    b = book_with_app()
+    s = b.issue_session("u1", "com.acme.app")
+    assert not (b.authenticate(s["access_token"]) or {}).get("scopes")
+
+
+def test_scope_list_is_closed():
+    assert T.SCOPES == ("users:write", "users:password")

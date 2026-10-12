@@ -113,6 +113,7 @@ async def ws_tokens(hass: HomeAssistant, connection: Any, msg: dict[str, Any]) -
 @websocket_api.websocket_command({
     vol.Required("type"): "sentinel_link/token_create", vol.Required("user_id"): str, vol.Required("name"): str,
     vol.Optional("expires_in_days"): vol.Any(None, int), vol.Optional("max_role"): vol.Any(None, str),
+    vol.Optional("scopes", default=[]): [str],
 })
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -127,12 +128,12 @@ async def ws_token_create(hass: HomeAssistant, connection: Any, msg: dict[str, A
         connection.send_error(msg["id"], "no_role", "That user has no API role; assign one in Hub Mgmt first")
         return
     rec, secret = st.book.create_long_lived(user.id, msg["name"], expires_in_days=msg.get("expires_in_days"),
-                                            max_role=msg.get("max_role"), created_by=connection.user.id)
+                                            max_role=msg.get("max_role"), created_by=connection.user.id, scopes=msg.get("scopes"))
     if rec is None:
         connection.send_error(msg["id"], "validation_failed", "; ".join(secret))  # type: ignore[arg-type]
         return
     st.log(connection.user, rbac.ROLE_ADMIN, "auth:create_token", rec["id"], "ok",
-           {"name": rec["name"], "for": user.name, "max_role": rec["max_role"], "expires": rec["expires"]})
+           {"name": rec["name"], "for": user.name, "max_role": rec["max_role"], "scopes": rec.get("scopes"), "expires": rec["expires"]})
     st.persist()
     out = st.book.public(rec)
     out["token"] = secret

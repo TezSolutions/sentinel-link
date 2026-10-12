@@ -35,6 +35,7 @@ MAX_CLIENTS = 50
 MAX_REDIRECTS = 10
 
 ROLE_RANK = {"viewer": 1, "operator": 2, "manager": 3, "admin": 4}
+SCOPES = ("users:write", "users:password")      # extra powers a token must be GRANTED; roles alone never give them
 CAPPABLE = ("viewer", "operator", "manager")   # a token can be limited to these
 
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$")
@@ -220,7 +221,7 @@ class TokenBook:
     # ------------------------------------------------------------------ long-lived tokens
     def create_long_lived(self, user_id: str, name: str, *, expires_in_days: int | None = None,
                           max_role: str | None = None, created_by: str | None = None,
-                          now: float | None = None) -> tuple[dict[str, Any] | None, str | list[str]]:
+                          scopes: list[str] | None = None, now: float | None = None) -> tuple[dict[str, Any] | None, str | list[str]]:
         """Return (record, plaintext_token) or (None, [errors])."""
         now = time.time() if now is None else now
         errs: list[str] = []
@@ -231,6 +232,9 @@ class TokenBook:
             errs.append("expires_in_days must be 1-3650 or null (no expiry)")
         if max_role is not None and max_role not in CAPPABLE:
             errs.append(f"max_role must be one of {list(CAPPABLE)} or null")
+        scopes = sorted(set(scopes or []))
+        if any(s not in SCOPES for s in scopes):
+            errs.append(f"scopes must be among {list(SCOPES)}")
         if sum(1 for t in self.tokens.values() if t["kind"] == KIND_LONG and t["user_id"] == user_id) >= MAX_TOKENS_PER_USER:
             errs.append(f"limit of {MAX_TOKENS_PER_USER} long-lived tokens per user reached")
         if errs:
@@ -238,7 +242,7 @@ class TokenBook:
         tid, h, tok = new_token_string(KIND_LONG)
         rec = {"id": tid, "kind": KIND_LONG, "hash": h, "user_id": user_id, "name": name.strip(),
                "created": now, "last_used": None, "expires": (now + expires_in_days * 86400) if expires_in_days else None,
-               "max_role": max_role, "created_by": created_by or user_id, "client_id": None}
+               "max_role": max_role, "created_by": created_by or user_id, "client_id": None, "scopes": scopes}
         self.tokens[tid] = rec
         self.dirty = True
         return rec, tok
@@ -390,7 +394,7 @@ class TokenBook:
     def public(rec: dict[str, Any]) -> dict[str, Any]:
         return {"id": rec["id"], "kind": rec["kind"], "name": rec.get("name"), "user_id": rec["user_id"],
                 "client_id": rec.get("client_id"), "created": rec.get("created"), "last_used": rec.get("last_used"),
-                "expires": rec.get("expires"), "max_role": rec.get("max_role")}
+                "expires": rec.get("expires"), "max_role": rec.get("max_role"), "scopes": rec.get("scopes") or []}
 
     def list(self, user_id: str | None = None) -> list[dict[str, Any]]:
         rows = [self.public(r) for r in self.tokens.values() if user_id is None or r["user_id"] == user_id]
