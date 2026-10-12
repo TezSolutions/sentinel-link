@@ -69,7 +69,7 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
         },
         "servers": [{"url": server_url}] if server_url else [],
         "security": sec,
-        "tags": [{"name": "Discovery"}, {"name": "Authentication"}, {"name": "Entities"}, {"name": "Realtime"}, {"name": "Admin"}],
+        "tags": [{"name": "Discovery"}, {"name": "Authentication"}, {"name": "Entities"}, {"name": "Realtime"}, {"name": "Admin"}, {"name": "Cloud"}],
         "paths": {
             f"{BASE}/info": {"get": {
                 "tags": ["Discovery"], "summary": "Service info (no auth)", "security": [],
@@ -196,6 +196,29 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
                         "description": "Support can read but never weaken these settings.",
                         "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LoginSettings"}}}},
                         "responses": {"200": ok("LoginSettings"), "400": _err("Invalid"), "403": _err("Not allowed / missing scope")}}},
+            f"{BASE}/cloud": {
+                "get": {"tags": ["Cloud"], "summary": "Cloud pairing status (admin role)",
+                        "description": "Connection state, sharing level, last time the cloud was heard, and whether a support report is approved. Never returns secrets.",
+                        "responses": {"200": ok("CloudStatus"), "403": _err("Admin only")}},
+                "put": {"tags": ["Cloud"], "summary": "Change sharing level, pause/resume, name (admin role + scope `cloud:manage`)",
+                        "description": "The cloud platform itself can never change these. `level`: health (status only), events (+ state changes and read-only API), full (+ device commands). Takes effect at once.",
+                        "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CloudSettings"}}}},
+                        "responses": {"200": ok("CloudStatus"), "400": _err("Invalid"), "403": _err("Admin only / missing scope")}},
+                "delete": {"tags": ["Cloud"], "summary": "Disconnect from the cloud platform (admin role + scope `cloud:manage`)",
+                           "description": "Forgets the pairing and stops the channel. The platform is told on a best-effort basis.",
+                           "responses": {"200": ok("CloudStatus"), "403": _err("Admin only / missing scope")}}},
+            f"{BASE}/cloud/enroll": {
+                "post": {"tags": ["Cloud"], "summary": "Pair this node with a cloud platform (admin role + scope `cloud:manage`)",
+                         "description": "The platform issues a one-time pairing code; the node sends it to `<endpoint>/v1/nodes/enroll` and keeps the secret it gets back. From then on the node dials out to the platform; no inbound port is opened.",
+                         "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CloudEnroll"}}}},
+                         "responses": {"201": ok("CloudStatus"), "400": _err("Invalid address/code, or the platform rejected the code"), "409": _err("Already paired"),
+                                       "502": _err("Platform unreachable or sent an invalid reply")}}},
+            f"{BASE}/cloud/debug": {
+                "put": {"tags": ["Cloud"], "summary": "Approve a remote support report for N minutes (admin role + scope `cloud:manage`)",
+                        "description": "Without an approval the platform's support-report request is refused. Default 60 minutes, at most 1440.",
+                        "requestBody": {"required": False, "content": {"application/json": {"schema": {"type": "object", "properties": {"minutes": {"type": "integer", "minimum": 1, "maximum": 1440}}}}}},
+                        "responses": {"200": ok("CloudStatus"), "400": _err("Invalid"), "409": _err("Not paired")}},
+                "delete": {"tags": ["Cloud"], "summary": "Withdraw the approval now", "responses": {"200": ok("CloudStatus")}}},
             f"{BASE}/users": {
                 "get": {"tags": ["Users"], "summary": "List users (admin role)",
                         "description": "Same list the node portal shows. The vendor support account is never listed. `assignable` = roles you may give.",
@@ -275,6 +298,19 @@ def build_spec(version: str, server_url: str = "") -> dict[str, Any]:
                     "logins": {"type": "array", "items": {"$ref": "#/components/schemas/LoginEntry"}}, "total": {"type": "integer"},
                     "scope": {"type": "string", "enum": ["all", "own"]}, "next_before": {"type": "integer", "nullable": True},
                     "integrity": {"type": "object", "properties": {"ok": {"type": "boolean"}, "entries": {"type": "integer"}}}, "retention_days": {"type": "integer"}}},
+        "CloudStatus": {"type": "object", "properties": {
+            "enrolled": {"type": "boolean"}, "endpoint": {"type": "string", "nullable": True}, "cloud_node_id": {"type": "string", "nullable": True},
+            "name": {"type": "string", "nullable": True}, "level": {"type": "string", "enum": ["health", "events", "full"]}, "paused": {"type": "boolean"},
+            "connected": {"type": "boolean"}, "connected_since": {"type": "number", "nullable": True}, "last_seen": {"type": "number", "nullable": True},
+            "silent_days": {"type": "number", "nullable": True}, "silent_warning": {"type": "boolean"}, "last_error": {"type": "string", "nullable": True},
+            "heartbeat_s": {"type": "integer"}, "enrolled_at": {"type": "number", "nullable": True}, "enrolled_by": {"type": "string", "nullable": True},
+            "debug": {"type": "object", "properties": {"approved_until": {"type": "number", "nullable": True}, "requested": {"type": "number", "nullable": True},
+                                                        "approved_by": {"type": "string", "nullable": True}}}}},
+        "CloudSettings": {"type": "object", "properties": {"level": {"type": "string", "enum": ["health", "events", "full"]}, "paused": {"type": "boolean"},
+                                                            "name": {"type": "string", "maxLength": 60}, "endpoint": {"type": "string", "description": "only while not paired"}}},
+        "CloudEnroll": {"type": "object", "required": ["endpoint", "code"], "properties": {
+            "endpoint": {"type": "string", "example": "https://cloud.example.com"}, "code": {"type": "string", "example": "K7Q2-M9XA-31"},
+            "level": {"type": "string", "enum": ["health", "events", "full"], "default": "health"}, "name": {"type": "string", "maxLength": 60}}},
                 "LoginSettings": {"type": "object", "properties": {
                     "retention_days": {"type": "integer", "minimum": 90}, "alerts": {"type": "object", "properties": {
                         "failed": {"type": "boolean"}, "new_ip": {"type": "boolean"}, "support": {"type": "boolean"}}},

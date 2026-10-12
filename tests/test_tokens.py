@@ -221,4 +221,4 @@ def test_oauth_session_tokens_carry_no_scopes():
 
 
 def test_scope_list_is_closed():
-    assert T.SCOPES == ("users:write", "users:password", "logins:settings")
+    assert T.SCOPES == ("users:write", "users:password", "logins:settings", "cloud:manage")

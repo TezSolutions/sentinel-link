@@ -35,7 +35,7 @@ MAX_CLIENTS = 50
 MAX_REDIRECTS = 10
 
 ROLE_RANK = {"viewer": 1, "operator": 2, "manager": 3, "admin": 4}
-SCOPES = ("users:write", "users:password", "logins:settings")      # extra powers a token must be GRANTED; roles alone never give them
+SCOPES = ("users:write", "users:password", "logins:settings", "cloud:manage")      # extra powers a token must be GRANTED; roles alone never give them
 CAPPABLE = ("viewer", "operator", "manager")   # a token can be limited to these
 
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$")
@@ -281,6 +281,15 @@ class TokenBook:
         if len(self.access) > 5000:
             self.purge(now)
         return tok, rec
+
+    def issue_relay(self, user_id: str, max_role: str | None, ttl: int = 3600, now: float | None = None) -> str:
+        """Short-lived access token for the cloud channel's own relay (memory only, scope `cloud`, never listed, never persisted).
+        The relay can reach only what cloud_rules.relay_allowed permits, and never more than `max_role`."""
+        now = time.time() if now is None else now
+        tid, h, tok = new_token_string(KIND_ACCESS)
+        self.access[tid] = {"id": tid, "kind": KIND_ACCESS, "hash": h, "user_id": user_id, "client_id": None, "refresh_id": None,
+                            "max_role": max_role, "expires": now + ttl, "created": now, "scopes": ["cloud"], "relay": True}
+        return tok
 
     def issue_session(self, user_id: str, client_id: str, now: float | None = None) -> dict[str, Any]:
         """Create a refresh token (never expires, rotates on use) + its first access token."""

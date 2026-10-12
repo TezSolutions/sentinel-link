@@ -198,6 +198,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     logins = LoginService(hass)
     logins.node = hass.config.location_name or ""
     await logins.async_load()
+    from . import debug as _debug_mod
+    state["support"] = {"collect": _debug_mod.collect, "host": _read_host_stats}     # used by the Link API cloud channel (approved support report, health)
     state["logins"] = logins            # sign-in history; recorded by the portal, the Link API sign-in pages and the hub's own sign-in flow
     install_flow_hook(hass, logins)
     async def _flush_logins(_event) -> None:

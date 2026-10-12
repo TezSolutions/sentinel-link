@@ -69,6 +69,8 @@ class ApiState:
         self.throttle = tok.Throttle()        # sign-in failure lockout
         self.pending: dict[str, dict[str, Any]] = {}   # second-factor tickets (memory only)
         self._unsub_sweep: Callable[[], None] | None = None
+        from .cloud import CloudChannel
+        self.cloud = CloudChannel(self)       # optional pairing with a cloud platform (outbound channel)
 
     # ------------------------------------------------------------------ life
     async def async_load(self) -> None:
@@ -80,6 +82,7 @@ class ApiState:
         for item in data.get("audit") or []:
             self.audit.append(item)
         self.book.load(data.get("auth"))
+        self.cloud.load(data.get("cloud"))
 
     @callback
     def async_start(self) -> None:
@@ -87,9 +90,11 @@ class ApiState:
         self._unsub_sweep = async_track_time_interval(self.hass, self._sweep, timedelta(seconds=60))
         self._unsub_users = self.hass.bus.async_listen("hub_mgmt_user_changed", self._on_user_changed)
         self._unsub_logins = self.hass.bus.async_listen("hub_mgmt_login", self._on_login)
+        self.cloud.start()
 
     @callback
     def async_stop(self) -> None:
+        self.cloud.stop()
         if getattr(self, "_unsub_logins", None):
             self._unsub_logins()
             self._unsub_logins = None
@@ -121,6 +126,7 @@ class ApiState:
             "default_role": self.default_role,
             "audit": list(self.audit),
             "auth": self.book.to_dict(),
+            "cloud": self.cloud.to_dict(),
         }
 
     # ------------------------------------------------------------------ rbac

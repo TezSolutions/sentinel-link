@@ -1,12 +1,17 @@
 {
   "domain": "sentinel_link",
   "name": "Sentinel Link",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "iot_class": "local_push",
   "config_flow": true,
-  "dependencies": ["http", "websocket_api"],
+  "dependencies": [
+    "http",
+    "websocket_api"
+  ],
   "requirements": [],
-  "codeowners": ["@VignanTej"],
+  "codeowners": [
+    "@VignanTej"
+  ],
   "documentation": "https://github.com/TezSolutions/sentinel-link",
   "issue_tracker": "https://github.com/TezSolutions/sentinel-link/issues",
   "homeassistant": "2026.6.0"

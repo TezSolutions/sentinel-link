@@ -670,5 +670,129 @@ class LoginsSettingsView(_LoginsBase):
 
 
 
-ALL_VIEWS = (LoginsView, LoginsSummaryView, LoginsSettingsView, UsersView, UserView, UserPasswordView, InfoView, OpenApiView, DocsView, MeView, EntitiesView, EntityView, CommandView, SnapshotView,
+# ---------------------------------------------------------------------------------------------- cloud (admin only)
+def _cloud_err(e) -> web.Response:
+    return _err(e.status, e.code, e.message)
+
+
+class _CloudBase(_Base):
+    """Administrator only; changes also need the token scope `cloud:manage`. The cloud platform itself can never reach these paths."""
+
+    async def _cloud_ctx(self, request: web.Request, write: bool = False):
+        c = await self._ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        hass, st, user, role = c
+        if not st.rbac().is_admin_role(role) or (request.get("sl_token") or {}).get("relay"):
+            return _err(403, "forbidden", "Admin role required")
+        if write and "cloud:manage" not in ((request.get("sl_token") or {}).get("scopes") or []):
+            st.log(user, role, "cloud:manage", request.path, "denied", {"reason": "missing scope"})
+            return _err(403, "missing_scope", "This token lacks the 'cloud:manage' scope")
+        return hass, st, user, role
+
+    @staticmethod
+    async def _body(request: web.Request):
+        try:
+            b = await request.json()
+        except ValueError:
+            return _err(400, "invalid_body", "Body must be JSON")
+        return b if isinstance(b, dict) else _err(400, "invalid_body", "Body must be an object")
+
+
+class CloudView(_CloudBase):
+    url = f"{BASE}/cloud"
+    name = "api:sentinel_link:cloud"
+
+    async def get(self, request: web.Request) -> web.Response:
+        c = await self._cloud_ctx(request)
+        if isinstance(c, web.Response):
+            return c
+        return web.json_response(c[1].cloud.status(), headers=_JSON_HEADERS)
+
+    async def put(self, request: web.Request) -> web.Response:
+        c = await self._cloud_ctx(request, True)
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role = c
+        b = await self._body(request)
+        if isinstance(b, web.Response):
+            return b
+        errs = st.cloud.configure(b)
+        if errs:
+            return _err(400, "validation_failed", "; ".join(errs))
+        st.log(user, role, "cloud.configure", "cloud", "ok", {k: v for k, v in b.items() if k in ("level", "paused", "name", "endpoint")})
+        st.persist()
+        return web.json_response(st.cloud.status(), headers=_JSON_HEADERS)
+
+    async def delete(self, request: web.Request) -> web.Response:
+        c = await self._cloud_ctx(request, True)
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role = c
+        cid = st.cloud.cfg.get("cloud_node_id")
+        await st.cloud.disconnect()
+        st.log(user, role, "cloud.disconnect", str(cid), "ok")
+        st.persist()
+        return web.json_response(st.cloud.status(), headers=_JSON_HEADERS)
+
+
+class CloudEnrollView(_CloudBase):
+    url = f"{BASE}/cloud/enroll"
+    name = "api:sentinel_link:cloud_enroll"
+
+    async def post(self, request: web.Request) -> web.Response:
+        c = await self._cloud_ctx(request, True)
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role = c
+        b = await self._body(request)
+        if isinstance(b, web.Response):
+            return b
+        try:
+            res = await st.cloud.enroll(user, b.get("endpoint", st.cloud.cfg.get("endpoint")), b.get("code"), b.get("level"), b.get("name"))
+        except Exception as e:  # noqa: BLE001
+            from .cloud import CloudError
+            if not isinstance(e, CloudError):
+                raise
+            st.log(user, role, "cloud.enroll", str(b.get("endpoint"))[:100], "error", {"code": e.code})
+            return _cloud_err(e)
+        st.log(user, role, "cloud.enroll", str(res.get("endpoint")), "ok", {"cloud_node_id": res.get("cloud_node_id"), "level": res.get("level")})
+        st.persist()
+        return web.json_response(res, status=201, headers=_JSON_HEADERS)
+
+
+class CloudDebugView(_CloudBase):
+    """On-node approval for the remote support report (default 60 minutes, at most 24 hours)."""
+    url = f"{BASE}/cloud/debug"
+    name = "api:sentinel_link:cloud_debug"
+
+    async def put(self, request: web.Request) -> web.Response:
+        c = await self._cloud_ctx(request, True)
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role = c
+        b = await self._body(request) if request.can_read_body else {}
+        if isinstance(b, web.Response):
+            return b
+        if not st.cloud.enrolled:
+            return _err(409, "not_enrolled", "This node is not connected to a cloud platform")
+        err = st.cloud.approve_debug(b.get("minutes"), user)
+        if err:
+            return _err(400, "validation_failed", err)
+        st.log(user, role, "cloud.debug_approve", "cloud", "ok", {"minutes": b.get("minutes", 60)})
+        st.persist()
+        return web.json_response(st.cloud.status(), headers=_JSON_HEADERS)
+
+    async def delete(self, request: web.Request) -> web.Response:
+        c = await self._cloud_ctx(request, True)
+        if isinstance(c, web.Response):
+            return c
+        _hass, st, user, role = c
+        st.cloud.approval.revoke()
+        st.log(user, role, "cloud.debug_revoke", "cloud", "ok")
+        st.persist()
+        return web.json_response(st.cloud.status(), headers=_JSON_HEADERS)
+
+
+ALL_VIEWS = (CloudView, CloudEnrollView, CloudDebugView, LoginsView, LoginsSummaryView, LoginsSettingsView, UsersView, UserView, UserPasswordView, InfoView, OpenApiView, DocsView, MeView, EntitiesView, EntityView, CommandView, SnapshotView,
              DevicesView, AreasView, EventsView, AdminConfigView, AdminAuditView)

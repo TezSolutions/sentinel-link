@@ -328,7 +328,7 @@ def test_no_api_can_delete_or_edit_entries():
         src = (C / f).read_text()
         assert not re.search(r"hub_mgmt/login_(delete|clear|edit|remove|purge)", src), f
     views = (C.parent / "sentinel_link" / "api" / "views.py").read_text()
-    seg = views[views.index("class LoginsView"):views.index("ALL_VIEWS = (")]
+    seg = views[views.index("class LoginsView"):views.index("# ---------------------------------------------------------------------------------------------- cloud")]  # the three sign-in history classes only
     assert "async def delete" not in seg and "async def post" not in seg and "async def patch" not in seg
 
 

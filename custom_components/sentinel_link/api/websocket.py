@@ -189,5 +189,61 @@ def ws_client_remove(hass: HomeAssistant, connection: Any, msg: dict[str, Any]) 
     connection.send_result(msg["id"], {"removed": True})
 
 
+# ---- cloud (portal, admin only) -------------------------------------------------------------------------------
+def _cloud_call(kind: str):
+    @websocket_api.websocket_command({vol.Required("type"): f"sentinel_link/cloud_{kind}", vol.Optional("endpoint"): str, vol.Optional("code"): str,
+                                      vol.Optional("level"): str, vol.Optional("name"): str, vol.Optional("paused"): bool, vol.Optional("minutes"): vol.Any(None, int)})
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def handler(hass: HomeAssistant, connection: Any, msg: dict[str, Any]) -> None:
+        from .cloud import CloudError
+        st = _state(hass)
+        if st is None:
+            connection.send_error(msg["id"], "unavailable", "Link API is not running")
+            return
+        u = connection.user
+        try:
+            if kind == "status":
+                pass
+            elif kind == "enroll":
+                await st.cloud.enroll(u, msg.get("endpoint"), msg.get("code"), msg.get("level"), msg.get("name"))
+                st.log(u, rbac.ROLE_ADMIN, "cloud.enroll", str(st.cloud.cfg.get("endpoint")), "ok", {"cloud_node_id": st.cloud.cfg.get("cloud_node_id"), "level": st.cloud.cfg.get("level")})
+            elif kind == "set":
+                ch = {k: msg[k] for k in ("level", "paused", "name", "endpoint") if k in msg}
+                errs = st.cloud.configure(ch)
+                if errs:
+                    connection.send_error(msg["id"], "validation_failed", "; ".join(errs))
+                    return
+                st.log(u, rbac.ROLE_ADMIN, "cloud.configure", "cloud", "ok", ch)
+            elif kind == "disconnect":
+                cid = st.cloud.cfg.get("cloud_node_id")
+                await st.cloud.disconnect()
+                st.log(u, rbac.ROLE_ADMIN, "cloud.disconnect", str(cid), "ok")
+            elif kind == "debug_approve":
+                if not st.cloud.enrolled:
+                    connection.send_error(msg["id"], "not_enrolled", "This node is not connected to a cloud platform")
+                    return
+                err = st.cloud.approve_debug(msg.get("minutes"), u)
+                if err:
+                    connection.send_error(msg["id"], "validation_failed", err)
+                    return
+                st.log(u, rbac.ROLE_ADMIN, "cloud.debug_approve", "cloud", "ok", {"minutes": msg.get("minutes", 60)})
+            elif kind == "debug_revoke":
+                st.cloud.approval.revoke()
+                st.log(u, rbac.ROLE_ADMIN, "cloud.debug_revoke", "cloud", "ok")
+        except CloudError as e:
+            st.log(u, rbac.ROLE_ADMIN, f"cloud.{kind}", "cloud", "error", {"code": e.code})
+            connection.send_error(msg["id"], e.code, e.message)
+            return
+        if kind != "status":
+            st.persist()
+        connection.send_result(msg["id"], st.cloud.status())
+    handler.__name__ = f"ws_cloud_{kind}"
+    return handler
+
+
+CLOUD_COMMANDS = tuple(_cloud_call(k) for k in ("status", "enroll", "set", "disconnect", "debug_approve", "debug_revoke"))
+
+
 ALL_COMMANDS = (ws_status, ws_users, ws_set_enabled, ws_config_set, ws_audit, ws_tokens, ws_token_create, ws_token_revoke, ws_client_save,
-                ws_client_remove)
+                ws_client_remove) + CLOUD_COMMANDS
