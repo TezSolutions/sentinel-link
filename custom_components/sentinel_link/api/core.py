@@ -189,6 +189,10 @@ class ApiState:
     async def _sweep(self, _now: Any = None) -> None:
         """Every minute: expire tokens, revoke those of removed/disabled users, close their streams, flush to disk."""
         self.book.purge()
+        try:
+            await self.cloud.check_admin()
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("cloud admin check failed", exc_info=True)
         users = {u.id: u for u in await self.hass.auth.async_get_users()}
         owners = {r["user_id"] for r in list(self.book.tokens.values()) + list(self.book.access.values())}
         for uid in owners:

@@ -72,7 +72,8 @@ E = "light.kitchen"
     ("events", "GET", "/entities", True, "ok"),
     ("events", "GET", "/entities?domain=light&limit=50", True, "ok"),
     ("events", "get", f"/entities/{E}", True, "ok"),
-    ("events", "GET", f"/entities/{E}/snapshot", True, "ok"),
+    ("events", "GET", f"/entities/{E}/snapshot", False, "level_too_low"),
+    ("full", "GET", f"/entities/{E}/snapshot", True, "ok"),
     ("events", "GET", "/devices", True, "ok"),
     ("events", "GET", "/areas", True, "ok"),
     ("events", "POST", f"/entities/{E}/command", False, "level_too_low"),
@@ -192,3 +193,71 @@ def test_relay_token_is_memory_only_and_scoped():
     assert b.authenticate(tok, now=time.time() + 4000) is None                 # expires
     assert "cloud:manage" in T.SCOPES
     assert b.create_long_lived("u1", "x", scopes=["cloud"])[0] is None         # `cloud` itself cannot be requested as a scope
+
+
+# ------------------------------------------------------------------------------------------------ review fixes
+def test_f3_redact_obj_keeps_json_valid_and_redacts_values():
+    rep = {"status_code": 200, "code": 5, "log_lines": ['password: "hunter2" ok', 'api_key=abcdef123', "Bearer abcdefghijklmnop"],
+           "api_key": "zzzzzzzz", "n": [{"token": "abc12345"}]}
+    out = R.redact_obj(rep)
+    json.dumps(out)
+    assert out["status_code"] == 200 and out["code"] == 5
+    assert out["api_key"] == "***" and out["n"][0]["token"] == "***"
+    txt = json.dumps(out)
+    assert "hunter2" not in txt and "abcdef123" not in txt and "abcdefghijklmnop" not in txt
+
+
+def test_f3_redact_escaped_quotes_and_deep():
+    assert "hunter2" not in R.redact('{"m": "password: \\"hunter2\\""}')
+    deep = cur = []
+    for _ in range(200):
+        n = []
+        cur.append(n)
+        cur = n
+    json.dumps(R.redact_obj(deep))
+
+
+@pytest.mark.parametrize("ch,ep,ok", [
+    ("wss://cloud.example.com/chan", "https://cloud.example.com", True),
+    ("wss://127.0.0.1:8123/api/websocket", "https://cloud.example.com", False),
+    ("wss://other.example.com/chan", "https://cloud.example.com", False),
+    ("wss://169.254.169.254/", "https://cloud.example.com", False),
+    ("ws://localhost:9/c", "http://localhost:9000", True),
+    ("ws://localhost:9/c", "https://cloud.example.com", False),
+])
+def test_f5_channel_host_must_match_endpoint(ch, ep, ok):
+    assert (R.validate_channel_url(ch, ep) is None) is ok
+
+
+def test_f6_attempt_reset_only_after_stable_uptime():
+    assert R.next_attempt(3, 0.2) == 4 and R.next_attempt(3, None) == 4 and R.next_attempt(3, 59) == 4
+    assert R.next_attempt(3, 60) == 0
+    assert R.backoff_jitter(3, 0.0) == R.backoff(3) * 0.5 and R.backoff_jitter(3, 1.0) == R.backoff(3) * 1.5
+    assert R.backoff_jitter(0, 0.5) >= 2.0
+
+
+def test_f6_handshake_rejected_statuses():
+    assert all(R.handshake_rejected(s) for s in (401, 403, 410)) and not R.handshake_rejected(500)
+
+
+def test_f4_rate_limiter_burst_and_refill():
+    rl = R.RateLimiter(rate=10, burst=5)
+    assert [rl.allow(0.0) for _ in range(6)] == [True] * 5 + [False]
+    assert rl.allow(0.5)
+
+
+def test_f4_audit_sampler_collapses():
+    a = R.AuditSampler()
+    assert a.note("k", 0) == (True, 0)
+    assert a.note("k", 1)[0] is False and a.note("k", 2)[0] is False
+    assert a.note("k", 61) == (True, 2)
+    assert a.note("other", 61) == (True, 0)
+
+
+def test_f13_parse_frame_recursion():
+    assert R.parse_frame('{"type":"a","x":' + "[" * 30000 + "]" * 30000 + "}") is None
+    assert R.parse_frame('{"type":"ok"}') == {"type": "ok"}
+
+
+def test_f7_no_cap_at_health():
+    assert R.relay_cap("health") is None and R.relay_cap("events") == "viewer"

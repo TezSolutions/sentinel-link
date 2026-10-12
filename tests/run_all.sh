@@ -44,7 +44,7 @@ fi
 
 for t in "${SUITES[@]}"; do
   set -- $t; f=$1; shift; extra="$*"
-  [ "$f" = e2e_linkapi.py ] && extra="https"
+  case "$f" in e2e_linkapi.py|e2e_cloud.py) extra="https";; esac
   name=${f#e2e_}; name=${name%.py}; DONE=$((DONE+1))
   echo "== $f"; P0=$(date +%s); sleep "$PAUSE"
   S0=$(date +%s); PAUSED=$(( S0 - P0 ))

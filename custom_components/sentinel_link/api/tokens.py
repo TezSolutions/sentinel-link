@@ -285,6 +285,8 @@ class TokenBook:
     def issue_relay(self, user_id: str, max_role: str | None, ttl: int = 3600, now: float | None = None) -> str:
         """Short-lived access token for the cloud channel's own relay (memory only, scope `cloud`, never listed, never persisted).
         The relay can reach only what cloud_rules.relay_allowed permits, and never more than `max_role`."""
+        if max_role not in ("viewer", "manager"):         # never an uncapped relay token (the `health` level has no relay at all)
+            raise ValueError("a relay token needs a role cap of viewer or manager")
         now = time.time() if now is None else now
         tid, h, tok = new_token_string(KIND_ACCESS)
         self.access[tid] = {"id": tid, "kind": KIND_ACCESS, "hash": h, "user_id": user_id, "client_id": None, "refresh_id": None,

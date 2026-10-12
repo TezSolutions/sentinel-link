@@ -5,8 +5,8 @@ The cloud channel lets a node be managed by a third-party cloud platform (white-
 * The NODE dials out.  The cloud never connects in, so no port is opened.
 * The node admin decides the sharing level; the cloud can never raise it:
     health  - node status only (heartbeat).  No entity data, no commands.
-    events  - health + entity state changes + read-only API calls (viewer role at most).
-    full    - events + device commands (manager role at most: lights, switches, climate, covers, locks, scenes ...).
+    events  - health + entity state changes + read-only API calls (viewer role at most; no camera snapshots).
+    full    - events + camera snapshots + device commands (manager role at most: lights, switches, climate, covers, locks, scenes ...).
 * The cloud channel can reach ONLY the paths in `relay_allowed`.  It can never manage users, tokens, apps, settings, the audit trail or the
   cloud settings themselves, whatever level is chosen.
 * A remote debug report needs on-node approval (time-boxed, 1 hour by default).
@@ -39,7 +39,7 @@ _SAFE_QUERY_RE = re.compile(r"^[A-Za-z0-9_.,=&%-]{0,200}$")
 _RELAY_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("GET", re.compile(r"^/(info|me|devices|areas|entities)$"), "events"),
     ("GET", re.compile(rf"^/entities/{_ENTITY_RE}$"), "events"),
-    ("GET", re.compile(rf"^/entities/{_ENTITY_RE}/snapshot$"), "events"),
+    ("GET", re.compile(rf"^/entities/{_ENTITY_RE}/snapshot$"), "full"),     # live camera images need the highest level
     ("POST", re.compile(rf"^/entities/{_ENTITY_RE}/command$"), "full"),
 )
 
@@ -98,9 +98,11 @@ def validate_channel_url(channel: Any, endpoint: str) -> str | None:
     scheme, host = (u.scheme or "").lower(), (u.hostname or "").lower()
     if not host or u.username or u.password or u.fragment:
         return "channel address is not valid"
+    if host != (e.hostname or "").lower():
+        return "channel address must be on the same host as the cloud address"
     if scheme == "wss":
         return None
-    loop = (e.hostname or "").lower() in ("localhost", "127.0.0.1", "::1") and host in ("localhost", "127.0.0.1", "::1")
+    loop = host in ("localhost", "127.0.0.1", "::1")
     if scheme == "ws" and loop:
         return None
     return "channel address must be wss://"
@@ -185,12 +187,15 @@ class Approval:
                 "approved_by": self.approved_by if self.active(now) else None}
 
 
+_SECRET_WORDS = r"password|passwd|secret|token|api[_-]?key|authorization|code"
 _REDACT = (
     (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1***"),
     (re.compile(r"\bsl[lra]_[A-Za-z0-9_-]{8,}"), "sl*_***"),
-    (re.compile(r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization|code)[\"']?\s*[:=]\s*[\"']?)[^\s\"',}&]{3,}"), r"\1***"),
+    (re.compile(rf"(?i)(\b(?:{_SECRET_WORDS})\b[\\\"']*\s*[:=]\s*[\\\"']*)[^\s\\\"',}}&]{{3,}}"), r"\1***"),
     (re.compile(r"(?i)([?&](?:token|key|password|code|access_token)=)[^&\s]+"), r"\1***"),
 )
+_SECRET_KEY = re.compile(rf"(?i)(?:^|[_-])(?:{_SECRET_WORDS})(?:$|[_-])")
+_MAX_DEPTH = 40
 
 
 def redact(text: str) -> str:
@@ -199,9 +204,74 @@ def redact(text: str) -> str:
     return text
 
 
+def redact_obj(obj: Any, _depth: int = 0) -> Any:
+    """Redact every string VALUE of a JSON-like structure (never the serialized text, which would corrupt the JSON), and
+    blank string values that sit under a secret-looking key."""
+    if _depth > _MAX_DEPTH:
+        return "***"
+    if isinstance(obj, str):
+        return redact(obj)
+    if isinstance(obj, dict):
+        return {k: ("***" if isinstance(v, str) and isinstance(k, str) and _SECRET_KEY.search(k) else redact_obj(v, _depth + 1)) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [redact_obj(v, _depth + 1) for v in obj]
+    return obj
+
+
 def backoff(attempt: int) -> float:
     """Reconnect delay in seconds: 2, 4, 8 ... capped at 300."""
     return float(min(300, 2 ** max(1, min(attempt, 9))))
+
+
+def backoff_jitter(attempt: int, rnd: float) -> float:
+    """backoff() spread over 0.5x-1.5x so a fleet does not reconnect in lockstep.  `rnd` is a random number in [0, 1)."""
+    return backoff(attempt) * (0.5 + min(max(rnd, 0.0), 1.0))
+
+
+STABLE_S = 60.0                    # a connection must stay up this long before the attempt counter resets
+REJECT_AFTER = 3                   # consecutive 401/403/410 handshakes before the channel is marked rejected
+
+
+def next_attempt(attempt: int, uptime_s: float | None) -> int:
+    return 0 if uptime_s is not None and uptime_s >= STABLE_S else attempt + 1
+
+
+def handshake_rejected(status: Any) -> bool:
+    return status in (401, 403, 410)
+
+
+class RateLimiter:
+    """Token bucket: `rate` tokens per second, up to `burst`."""
+
+    def __init__(self, rate: float = 20.0, burst: float = 40.0) -> None:
+        self.rate, self.burst, self.tokens, self.t = rate, burst, burst, None
+
+    def allow(self, now: float) -> bool:
+        if self.t is not None:
+            self.tokens = min(self.burst, self.tokens + (now - self.t) * self.rate)
+        self.t = now
+        if self.tokens >= 1:
+            self.tokens -= 1
+            return True
+        return False
+
+
+class AuditSampler:
+    """Collapses repeated audit lines: the first event per key in a window is logged at once; the rest are counted and reported
+    with the next logged one, so a flood cannot push the admin's own entries out of the (small) shared audit ring."""
+
+    def __init__(self, window: float = 60.0) -> None:
+        self.window, self.last, self.skipped = window, {}, {}
+
+    def note(self, key: str, now: float, window: float | None = None) -> tuple[bool, int]:
+        """(log_it, suppressed_since_last_log)"""
+        t = self.last.get(key)
+        if t is None or now - t >= (self.window if window is None else window):
+            n = self.skipped.pop(key, 0)
+            self.last[key] = now
+            return True, n
+        self.skipped[key] = self.skipped.get(key, 0) + 1
+        return False, 0
 
 
 def silent_days(last_seen: float | None, now: float) -> float | None:
@@ -215,7 +285,7 @@ def parse_frame(text: Any) -> dict[str, Any] | None:
         return None
     try:
         d = json.loads(text)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     return d if isinstance(d, dict) and isinstance(d.get("type"), str) and len(d["type"]) <= 32 else None
 

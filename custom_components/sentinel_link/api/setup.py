@@ -67,6 +67,10 @@ async def async_set_enabled(hass: HomeAssistant, enabled: bool) -> None:
             except Exception:  # noqa: BLE001
                 pass
         st.subscribers.clear()
+    try:
+        st.cloud.restart()                # drops the stale event subscription id; the relay / events resume cleanly on re-enable
+    except Exception:  # noqa: BLE001
+        pass
     entry = hass.config_entries.async_get_entry(st.entry_id)
     if entry is not None:
         st.skip_reload = True
