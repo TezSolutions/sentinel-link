@@ -66,3 +66,13 @@ def test_item_routes_accept_their_path_variable():
     assert len(handlers) == 4, handlers
     assert all(arg == "user_id" for _m, arg in handlers), handlers
     assert 'match_info["user_id"]' not in seg
+
+
+def test_portal_evicts_lru_instead_of_refusing_when_table_full():
+    P = (pathlib.Path.home() / "tez-sentinel-image/stack/portal/portal.py")
+    if not P.exists():
+        return
+    src = P.read_text()
+    i = src.index("async def h_login") if "async def h_login" in src else 0
+    assert "session evicted (table full)" in src and "min(SESSIONS, key=lambda t: SESSIONS[t].last)" in src
+    assert "len(SESSIONS) >= MAX_SESSIONS * 2" in src and "len(SESSIONS) >= MAX_SESSIONS:\n        return" not in src
