@@ -497,19 +497,19 @@ class UserView(_UsersBase):
     url = f"{BASE}/users/{{user_id}}"
     name = "api:sentinel_link:user"
 
-    async def get(self, request: web.Request) -> web.Response:
+    async def get(self, request: web.Request, user_id: str) -> web.Response:
         c = await self._users_ctx(request)
         if isinstance(c, web.Response):
             return c
         _hass, st, user, role, api = c
         try:
-            return web.json_response(await api.get(request.match_info["user_id"], user), headers=_JSON_HEADERS)
+            return web.json_response(await api.get(user_id, user), headers=_JSON_HEADERS)
         except Exception as err:  # noqa: BLE001
             if not (hasattr(err, "status") and hasattr(err, "code")):
                 raise
             return _err(err.status, err.code, err.message)
 
-    async def patch(self, request: web.Request) -> web.Response:
+    async def patch(self, request: web.Request, user_id: str) -> web.Response:
         """Body: any of name, role, active. Everything is validated before anything is changed."""
         c = await self._users_ctx(request, "users:write")
         if isinstance(c, web.Response):
@@ -523,7 +523,7 @@ class UserView(_UsersBase):
             return _err(400, "validation_failed", "Send one or more of: name, role, active")
         if "active" in b and not isinstance(b["active"], bool):
             return _err(400, "validation_failed", "active must be true or false")
-        uid = request.match_info["user_id"]
+        uid = user_id
         try:
             await api.get(uid, user)
         except Exception as err:  # noqa: BLE001
@@ -538,12 +538,12 @@ class UserView(_UsersBase):
                     return res
         return web.json_response(await api.get(uid, user), headers=_JSON_HEADERS)
 
-    async def delete(self, request: web.Request) -> web.Response:
+    async def delete(self, request: web.Request, user_id: str) -> web.Response:
         c = await self._users_ctx(request, "users:write")
         if isinstance(c, web.Response):
             return c
         _hass, st, user, role, api = c
-        uid = request.match_info["user_id"]
+        uid = user_id
         res = await self._run(st, user, role, "users:delete", uid, api.remove(user, uid))
         return res if isinstance(res, web.Response) else web.Response(status=204, headers=_JSON_HEADERS)
 
@@ -552,7 +552,7 @@ class UserPasswordView(_UsersBase):
     url = f"{BASE}/users/{{user_id}}/password"
     name = "api:sentinel_link:user_password"
 
-    async def post(self, request: web.Request) -> web.Response:
+    async def post(self, request: web.Request, user_id: str) -> web.Response:
         c = await self._users_ctx(request, "users:password")
         if isinstance(c, web.Response):
             return c
@@ -560,7 +560,7 @@ class UserPasswordView(_UsersBase):
         b = await self._json(request)
         if isinstance(b, web.Response):
             return b
-        uid = request.match_info["user_id"]
+        uid = user_id
         res = await self._run(st, user, role, "users:password", uid, api.set_password(user, uid, b.get("password", "")))
         return res if isinstance(res, web.Response) else web.json_response({"ok": True}, headers=_JSON_HEADERS)
 

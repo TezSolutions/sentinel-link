@@ -17,6 +17,8 @@ CID = "com.sentinel.e2e"             # the registered OAuth app
 REDIR = "com.sentinel.e2e://callback"
 API = BASE + "/api/sentinel_link/v1"
 R = []
+_VID = uuid.uuid4().hex[:8]
+VLIGHT, VLOCK = f"light.e2e_virtual_{_VID}", f"lock.e2e_virtual_{_VID}"
 
 
 def ok(name, cond, extra=""):
@@ -128,13 +130,19 @@ async def main():
             nouser = "e2enone"
             r = await a.call(type="hub_mgmt/user_create", name=nouser, username=nouser, password=TPASS, role="user")
             ok("create plain user (no role)", r["success"], r.get("error")); created.append(nouser)
-            # pick test entities
+            # pick test entities: VIRTUAL ones only. Tests must never operate real devices, so the light/switch/lock used for
+            # control and realtime checks are state-only entities that no integration serves (a service call to them is a no-op).
+            for vid, vstate, vattrs in ((VLIGHT, "off", {"supported_color_modes": ["brightness"], "friendly_name": "E2E virtual light"}),
+                                        (VLOCK, "locked", {"friendly_name": "E2E virtual lock"})):
+                rr = await s.post(f"{HUB}/api/states/{vid}", json={"state": vstate, "attributes": vattrs}, headers=H(hub_admin))
+                ok(f"virtual entity {vid} created", rr.status in (200, 201), rr.status)
             ents = (await s.get(API + "/entities?limit=2000", headers=H(atok), ssl=False))
             ok("admin GET /entities 200", ents.status == 200, ents.status)
             ej = await ents.json()
-            lights = [e for e in ej["entities"] if e["domain"] == "light"]
-            switches = [e for e in ej["entities"] if e["domain"] == "switch"]
-            locks = [e for e in ej["entities"] if e["domain"] == "lock"]
+            lights = [e for e in ej["entities"] if e["entity_id"] == VLIGHT]
+            switches = []
+            locks = [e for e in ej["entities"] if e["entity_id"] == VLOCK]
+            ok("virtual light and lock are visible through the API", len(lights) == 1 and len(locks) == 1, (len(lights), len(locks)))
             doms = {e["domain"] for e in ej["entities"]}
             ok("admin sees entities", ej["total"] > 0, ej["total"])
             ok("hard-denied domains absent", not (doms & {"device_tracker", "person", "update", "persistent_notification"}), sorted(doms))
@@ -218,8 +226,8 @@ async def main():
                                 if b"event: state" in line: return
                     st_ = asyncio.create_task(sse())
                     await asyncio.sleep(2)
-                    for _ in range(2):
-                        await s.post(f"{API}/entities/{tid}/command", json={"command": "toggle"}, headers=H(ot), ssl=False)
+                    for st_v in ("on", "off"):
+                        await s.post(f"{HUB}/api/states/{tid}", json={"state": st_v, "attributes": {"supported_color_modes": ["brightness"], "friendly_name": "E2E virtual light"}}, headers=H(hub_admin))
                         await asyncio.sleep(1.5)
                     try: await asyncio.wait_for(st_, 8)
                     except asyncio.TimeoutError: pass
@@ -372,4 +380,15 @@ async def main():
     print(f"\n{len(R)-len(bad)}/{len(R)} passed")
     if bad: print("FAILED:", bad); sys.exit(1)
 
-asyncio.run(main())
+async def _drop_virtual():
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as s:
+        t = await hub_token(s, ADMIN, APASS)
+        for vid in (VLIGHT, VLOCK):
+            if t:
+                await s.delete(f"{HUB}/api/states/{vid}", headers={"Authorization": "Bearer " + t})
+
+
+try:
+    asyncio.run(main())
+finally:
+    asyncio.run(_drop_virtual())

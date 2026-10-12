@@ -2,13 +2,27 @@
 """Super-admin tier E2E: python3 e2e_superadmin.py <host> <admin_user>
 (HA_UI_PASS for the customer admin from env/~/.bashrc; the vendor account's password from SUPERADMIN_PASS or ~/.config/tez-sentinel/<node>-tez-admin.)
 Read-only against the node apart from throwaway users 'e2esa*' (removed in `finally`). Never touches real devices."""
-import asyncio, io, json, os, re, sys, uuid, zipfile
+import asyncio, json, io, json, os, re, sys, uuid, zipfile
 import aiohttp
 
 HOST, ADMIN = sys.argv[1], sys.argv[2]
 P = (os.environ.get("HA_UI_PASS") or re.search(r'^\s*export\s+HA_UI_PASS=(["\']?)(.*?)\1\s*$', open(os.path.expanduser("~/.bashrc")).read(), re.M).group(2))
-NODE_TAG = os.environ.get("SUPERADMIN_FILE_TAG", "fedeyn")
-SP = os.environ.get("SUPERADMIN_PASS") or open(os.path.expanduser(f"~/.config/tez-sentinel/{NODE_TAG}-tez-admin")).read().strip()
+def _node_tag():
+    """Credentials file is named after the node (node_id without the 'sentinel-' prefix), e.g. fedeyn."""
+    if os.environ.get("SUPERADMIN_FILE_TAG"):
+        return os.environ["SUPERADMIN_FILE_TAG"]
+    import ssl, urllib.request
+    c = ssl.create_default_context(); c.check_hostname = False; c.verify_mode = ssl.CERT_NONE
+    nid = json.load(urllib.request.urlopen(f"https://{HOST}/api/sentinel_link/v1/info", context=c, timeout=15)).get("node_id", "")
+    return nid.removeprefix("sentinel-")
+
+
+NODE_TAG = _node_tag()
+_pf = os.path.expanduser(f"~/.config/tez-sentinel/{NODE_TAG}-tez-admin")
+if not os.environ.get("SUPERADMIN_PASS") and not os.path.exists(_pf):
+    print(f"SKIP: no super admin credentials for node '{NODE_TAG}' (vendor tier not provisioned on this node)\n0/0 passed (skipped)")
+    sys.exit(0)
+SP = os.environ.get("SUPERADMIN_PASS") or open(_pf).read().strip()
 PW = "Tmp-" + uuid.uuid4().hex[:14] + "-Aa1"
 B = f"https://{HOST}"
 R = []

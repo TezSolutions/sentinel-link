@@ -100,6 +100,7 @@ async def main():
                         st, d = await call(us, type="hub_mgmt/" + c, **extra)
                         if not d.get("ok") and d.get("error", {}).get("code") == "unauthorized": denied += 1
                     ck(f"{role} denied all {len(cmds)} system commands", denied == len(cmds), denied)
+                    await asyncio.sleep(2)  # the 12 denied commands above share nginx's 30 r/s bucket; let it drain
                     r = await us.get(B + f"/portal/backup/{bid}", ssl=False); ck(f"{role} cannot download a backup", r.status == 403, r.status)
                     d = (await call(adm, type="hub_mgmt/system_info"))[1]
             d = await A(type="hub_mgmt/system_info"); ck("name unchanged after attempted tamper", d["result"]["settings"]["name"] == orig["name"])

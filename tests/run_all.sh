@@ -28,7 +28,7 @@ eta() {  # eta <steps-done> <total>: average time per finished step x steps left
 fmt() { printf '%dm%02ds' $(($1/60)) $(($1%60)); }
 T0=$(date +%s); NODE="$HOST"
 NETFLAG="--no-net-apply"; [ $NET = 1 ] && NETFLAG=""
-SUITES=("e2e_users.py" "e2e_integrations.py $NETFLAG" "e2e_areas.py" "e2e_devices.py" "e2e_scenes.py" "e2e_system.py" "e2e_setup.py" "e2e_superadmin.py" "e2e_portal.py" "e2e_linkapi.py")
+SUITES=("e2e_users.py" "e2e_integrations.py $NETFLAG" "e2e_areas.py" "e2e_devices.py" "e2e_scenes.py" "e2e_system.py" "e2e_setup.py" "e2e_superadmin.py" "e2e_linkapi_users.py" "e2e_portal.py" "e2e_linkapi.py")
 TOTAL=$(( ${#SUITES[@]} + 1 )); [ $QUICK = 1 ] && TOTAL=1
 SUMMARY=""; DONE=0
 notify "Regression started on $NODE: $TOTAL step(s), about $(( QUICK==1 ? 1 : (${#SUITES[@]} * (PAUSE + 40)) / 60 )) min, ETA ~$(TZ=Asia/Kolkata date -d "@$(( T0 + ${#SUITES[@]} * (PAUSE + 40) ))" +%H:%M) IST."

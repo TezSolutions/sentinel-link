@@ -57,3 +57,12 @@ def test_audit_never_logs_passwords():
 def test_openapi_documents_users_endpoints():
     for frag in ("/users", "/users/{{user_id}}", "/users/{{user_id}}/password", '"UserCreate"', '"UserPatch"'):
         assert frag in OPENAPI, frag
+
+
+def test_item_routes_accept_their_path_variable():
+    """The hub passes {user_id} to the handler as a keyword argument; a handler without it answers 500 (found live)."""
+    seg = VIEWS[VIEWS.index("class UserView("):VIEWS.index("ALL_VIEWS = (")]
+    handlers = re.findall(r"async def (get|patch|delete|post)\(self, request: web\.Request(?:, (\w+): str)?\)", seg)
+    assert len(handlers) == 4, handlers
+    assert all(arg == "user_id" for _m, arg in handlers), handlers
+    assert 'match_info["user_id"]' not in seg
