@@ -19,6 +19,9 @@ from .const import (
     CONF_CLOUD_PASSWORD,
     CONF_CLOUD_PORT,
     CONF_CLOUD_TLS,
+    DEFAULT_CLOUD_HOST,
+    DEFAULT_CLOUD_PORT,
+    LEGACY_CLOUD_PORT,
     CONF_CLOUD_USERNAME,
     CONF_METRICS_INTERVAL,
     CONF_NODE_ID,
@@ -208,9 +211,38 @@ def _read_version() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _upgrade_cloud_transport(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Move the legacy plaintext Tez broker settings (mqtt.flespi.io:1883, no TLS) to 8883 + TLS.
+
+    Idempotent and applied to both ``data`` and ``options`` (the options flow stores a merged
+    copy, and options override data). Only the default Tez broker host is touched; a customer's own
+    broker, or an explicit non-default choice, is left as-is. Runs before the update listener is
+    registered, so persisting the change does not trigger a reload. No version bump on purpose:
+    an older Sentinel Link still reads the new keys, so a rollback is safe.
+    """
+    def fix(d: dict[str, Any]) -> dict[str, Any]:
+        d = dict(d)
+        if (
+            d.get(CONF_CLOUD_HOST) == DEFAULT_CLOUD_HOST
+            and not d.get(CONF_CLOUD_TLS, False)
+            and int(d.get(CONF_CLOUD_PORT, LEGACY_CLOUD_PORT)) == LEGACY_CLOUD_PORT
+        ):
+            d[CONF_CLOUD_PORT] = DEFAULT_CLOUD_PORT
+            d[CONF_CLOUD_TLS] = True
+        return d
+
+    new_data, new_opts = fix(entry.data), fix(entry.options) if CONF_CLOUD_HOST in entry.options else dict(entry.options)
+    if new_data != dict(entry.data) or new_opts != dict(entry.options):
+        _LOGGER.warning(
+            "Sentinel Link: upgrading the Tez cloud connection from plaintext (1883) to TLS (8883)"
+        )
+        hass.config_entries.async_update_entry(entry, data=new_data, options=new_opts)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Sentinel Link from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+    _upgrade_cloud_transport(hass, entry)
 
     # Merge data + options (options override data)
     cfg: dict[str, Any] = dict(entry.data)

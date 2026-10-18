@@ -60,12 +60,20 @@ DEFAULT_LOCAL_PASSWORD = "NodeRED#123"
 DEFAULT_LOCAL_TLS = False
 
 DEFAULT_CLOUD_HOST = "mqtt.flespi.io"
-DEFAULT_CLOUD_PORT = 1883
+DEFAULT_CLOUD_PORT = 8883  # TLS (was 1883 plaintext before 1.9.1)
 DEFAULT_CLOUD_USERNAME = (
     "ruRjRlgZ6mCVTXQfNK3csHJJGX7L7y3iCaK0HjiffPxOR4m6T29hyBI9EldGezCr"
 )
 DEFAULT_CLOUD_PASSWORD = ""
-DEFAULT_CLOUD_TLS = False
+DEFAULT_CLOUD_TLS = True  # certificate + hostname verified; never silently falls back to plaintext
+
+# Plaintext/legacy values of the Tez cloud broker that are upgraded to TLS on setup
+LEGACY_CLOUD_PORT = 1883
+CLOUD_STATUS_CONNECTED = "connected"
+CLOUD_STATUS_CONNECTING = "connecting"
+CLOUD_STATUS_TLS_ERROR = "disconnected: TLS error"
+CLOUD_STATUS_AUTH_ERROR = "disconnected: authentication failed"
+CLOUD_STATUS_DISCONNECTED = "disconnected"
 
 DEFAULT_AVAILABILITY_BEACON = True
 DEFAULT_SYSTEM_METRICS = True

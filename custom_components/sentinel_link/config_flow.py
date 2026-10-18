@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import socket
+import ssl
 import threading
 from typing import Any
 
@@ -119,7 +120,8 @@ def _test_mqtt_connection(
         client.username_pw_set(username, password if password is not None else "")
     if use_tls:
         try:
-            client.tls_set()
+            from .cloud_client import make_tls_context
+            client.tls_set_context(make_tls_context())
         except Exception:  # noqa: BLE001
             return "tls_error"
     client.on_connect = on_connect
@@ -129,6 +131,8 @@ def _test_mqtt_connection(
         ok = connected.wait(timeout=_TIMEOUT)
         if not ok:
             result[0] = "timeout"
+    except ssl.SSLError:
+        result[0] = "tls_error"
     except Exception:  # noqa: BLE001
         result[0] = "cannot_connect"
     finally:

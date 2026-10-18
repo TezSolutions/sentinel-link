@@ -108,6 +108,18 @@ class SentinelAvailabilitySensor(BinarySensorEntity):
     def is_on(self) -> bool:
         return self._connected
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Link status incl. TLS (``disconnected: TLS error`` when verification fails)."""
+        client = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {}).get(DATA_CLOUD_CLIENT)
+        if client is None:
+            return {}
+        return {
+            "link_status": client.status_text,
+            "encrypted": bool(client.use_tls),
+            "broker": client.endpoint,
+        }
+
     # ------------------------------------------------------------------
     # External update (called from cloud_client callback → HA event loop)
     # ------------------------------------------------------------------
@@ -118,10 +130,11 @@ class SentinelAvailabilitySensor(BinarySensorEntity):
         This method is called via ``run_coroutine_threadsafe`` from the cloud
         client's background thread, so it runs in the HA event loop.
         """
-        if self._connected != connected:
-            self._connected = connected
-            self.async_write_ha_state()
-            _LOGGER.debug(
-                "Sentinel Link: availability sensor → %s",
-                "connected" if connected else "disconnected",
-            )
+        # Always write: the link status text (e.g. "disconnected: TLS error") can change
+        # while the boolean state stays off.
+        self._connected = connected
+        self.async_write_ha_state()
+        _LOGGER.debug(
+            "Sentinel Link: availability sensor → %s",
+            "connected" if connected else "disconnected",
+        )

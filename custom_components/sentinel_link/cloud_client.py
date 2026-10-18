@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import socket
+import ssl
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,11 @@ from paho.mqtt.enums import CallbackAPIVersion
 import paho.mqtt.client as mqtt
 
 from .const import (
+    CLOUD_STATUS_AUTH_ERROR,
+    CLOUD_STATUS_CONNECTED,
+    CLOUD_STATUS_CONNECTING,
+    CLOUD_STATUS_DISCONNECTED,
+    CLOUD_STATUS_TLS_ERROR,
     TOPIC_CLOUD_CPU,
     TOPIC_CLOUD_GEOIP,
     TOPIC_CLOUD_HDD,
@@ -35,6 +41,18 @@ _LOGGER = logging.getLogger(__name__)
 
 # How long to wait (seconds) for the paho client to acknowledge disconnect
 _DISCONNECT_TIMEOUT = 5
+
+
+def make_tls_context() -> ssl.SSLContext:
+    """Verifying client context: system CA bundle, certificate required, hostname checked.
+
+    Deliberately no CERT_NONE / check_hostname=False / tls_insecure anywhere.
+    """
+    ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.check_hostname = True
+    return ctx
 
 
 class SentinelCloudClient:
@@ -69,6 +87,8 @@ class SentinelCloudClient:
         )
 
         self._connected = False
+        self._status = CLOUD_STATUS_CONNECTING
+        self._ssl_ctx: ssl.SSLContext | None = None
         self._shutdown = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -82,13 +102,14 @@ class SentinelCloudClient:
         self._topic_geoip = TOPIC_CLOUD_GEOIP.format(node_id=node_id)
         self._topic_notify = TOPIC_CLOUD_NOTIFY.format(node_id=node_id)
 
-        self._client = self._build_client()
+        # TLS context loads the CA bundle (blocking I/O): built later in the worker thread.
+        self._client = self._build_client(configure_tls=False)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_client(self) -> mqtt.Client:
+    def _build_client(self, configure_tls: bool = True) -> mqtt.Client:
         client_id = f"sentinel_link_{self._node_id}_{int(time.time())}"
         client = mqtt.Client(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -106,8 +127,10 @@ class SentinelCloudClient:
             )
 
         # TLS
-        if self._use_tls:
-            client.tls_set()
+        if self._use_tls and configure_tls:
+            if self._ssl_ctx is None:
+                self._ssl_ctx = make_tls_context()
+            client.tls_set_context(self._ssl_ctx)
 
         # LWT
         client.will_set(
@@ -139,6 +162,7 @@ class SentinelCloudClient:
                 self._port,
             )
             self._connected = True
+            self._status = CLOUD_STATUS_CONNECTED
             # Publish online status
             client.publish(self._topic_status, payload="online", qos=1, retain=True)
             # Notify HA
@@ -151,6 +175,11 @@ class SentinelCloudClient:
                 "Sentinel Link: cloud broker connect failed: %s", reason_code
             )
             self._connected = False
+            self._status = (
+                CLOUD_STATUS_AUTH_ERROR
+                if "uthorized" in str(reason_code) or "credentials" in str(reason_code)
+                else CLOUD_STATUS_DISCONNECTED
+            )
             if self._on_connection_state_change:
                 asyncio.run_coroutine_threadsafe(
                     self._on_connection_state_change(False), self._loop
@@ -165,6 +194,8 @@ class SentinelCloudClient:
         properties: Any,
     ) -> None:
         self._connected = False
+        if self._status == CLOUD_STATUS_CONNECTED:
+            self._status = CLOUD_STATUS_DISCONNECTED
         if self._shutdown.is_set():
             _LOGGER.debug("Sentinel Link: cloud broker disconnected (clean shutdown)")
         else:
@@ -200,6 +231,12 @@ class SentinelCloudClient:
                 # inconsistent after loop_forever() returns on disconnect, causing
                 # auth failures on subsequent reconnects with the same client object.
                 self._client = self._build_client()
+                if not self._use_tls:
+                    _LOGGER.warning(
+                        "Sentinel Link: cloud connection to %s:%s is NOT encrypted "
+                        "(cloud_tls is off). Enable TLS (port 8883).",
+                        self._host, self._port,
+                    )
                 _LOGGER.debug(
                     "Sentinel Link: attempting cloud broker connect %s:%s",
                     self._host,
@@ -216,6 +253,22 @@ class SentinelCloudClient:
                 _LOGGER.debug(
                     "Sentinel Link: cloud loop_forever returned, retrying in %ds", delay
                 )
+                self._shutdown.wait(delay)
+                delay = min(delay * 2, max_delay)
+            except ssl.SSLError as exc:
+                # Certificate / hostname / protocol failure. Never fall back to plaintext.
+                self._connected = False
+                self._status = CLOUD_STATUS_TLS_ERROR
+                _LOGGER.error(
+                    "Sentinel Link: TLS error connecting to %s:%s (%s). Not falling back to "
+                    "an unencrypted connection; cloud telemetry stays off and local "
+                    "operation is unaffected. Retry in %ds.",
+                    self._host, self._port, exc, delay,
+                )
+                if self._on_connection_state_change:
+                    asyncio.run_coroutine_threadsafe(
+                        self._on_connection_state_change(False), self._loop
+                    )
                 self._shutdown.wait(delay)
                 delay = min(delay * 2, max_delay)
             except OSError as exc:
@@ -272,6 +325,19 @@ class SentinelCloudClient:
             pass
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=_DISCONNECT_TIMEOUT)
+
+    @property
+    def status_text(self) -> str:
+        """Human-readable link status (``connected`` / ``disconnected: TLS error`` ...)."""
+        return self._status
+
+    @property
+    def use_tls(self) -> bool:
+        return self._use_tls
+
+    @property
+    def endpoint(self) -> str:
+        return f"{self._host}:{self._port}"
 
     @property
     def is_connected(self) -> bool:
@@ -451,9 +517,9 @@ def validate_cloud_broker(
         clean_session=True,
     )
     if username:
-        client.username_pw_set(username, password or None)
+        client.username_pw_set(username, password if password is not None else "")
     if use_tls:
-        client.tls_set()
+        client.tls_set_context(make_tls_context())
     client.on_connect = on_connect
 
     try:
@@ -461,6 +527,8 @@ def validate_cloud_broker(
         client.loop_start()
         if not connected_event.wait(timeout=timeout):
             result[0] = "timeout"
+    except ssl.SSLError as exc:
+        result[0] = f"TLS error: {exc}"
     except Exception as exc:  # noqa: BLE001
         result[0] = str(exc)
     finally:

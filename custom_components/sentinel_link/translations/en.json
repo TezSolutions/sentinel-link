@@ -32,10 +32,10 @@
         },
         "data_description": {
           "cloud_host": "Flespi broker hostname (default: mqtt.flespi.io).",
-          "cloud_port": "TCP port (1883 plain, 8883 for TLS).",
+          "cloud_port": "TCP port. Default 8883 (TLS). 1883 is unencrypted and not recommended.",
           "cloud_username": "Flespi access token used as the MQTT username.",
           "cloud_password": "Leave blank for Flespi token-based auth.",
-          "cloud_tls": "Enable TLS/SSL encryption for the cloud connection.",
+          "cloud_tls": "Encrypt the cloud connection (certificate and hostname are verified). Leave on; turning it off sends data in plaintext.",
           "node_id": "Unique identifier for this node (used in MQTT topic paths). Defaults to hostname."
         }
       },
@@ -65,7 +65,7 @@
     "error": {
       "cannot_connect": "Cannot connect to the MQTT broker. Check host, port, and credentials.",
       "timeout": "Connection attempt timed out. The broker may be unreachable.",
-      "tls_error": "TLS configuration error. Verify certificates or disable TLS.",
+      "tls_error": "TLS error: the broker certificate could not be verified or TLS is not offered on this port.",
       "unknown": "An unexpected error occurred. Check the Sentinel Hub logs for details."
     },
     "abort": {
