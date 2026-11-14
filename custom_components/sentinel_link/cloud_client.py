@@ -503,9 +503,9 @@ def validate_cloud_broker(
     connected_event = threading.Event()
 
     def on_connect(client, userdata, connect_flags, reason_code, properties):
-        if reason_code == 0 or (
-            hasattr(reason_code, "is_failure") and not reason_code.is_failure()
-        ):
+        # Paho v2 ReasonCode compares to integer zero; is_failure is a boolean
+        # property, not a method. Calling it hides broker refusals as timeouts.
+        if reason_code == 0:
             connected_event.set()
         else:
             result[0] = str(reason_code)

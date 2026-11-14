@@ -212,7 +212,7 @@ def _read_version() -> str:
 
 
 def _upgrade_cloud_transport(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Move the legacy plaintext Tez broker settings (mqtt.flespi.io:1883, no TLS) to 8883 + TLS.
+    """Repair legacy Tez broker port 1883 (with or without TLS) to 8883 + TLS.
 
     Idempotent and applied to both ``data`` and ``options`` (the options flow stores a merged
     copy, and options override data). Only the default Tez broker host is touched; a customer's own
@@ -220,21 +220,22 @@ def _upgrade_cloud_transport(hass: HomeAssistant, entry: ConfigEntry) -> None:
     registered, so persisting the change does not trigger a reload. No version bump on purpose:
     an older Sentinel Link still reads the new keys, so a rollback is safe.
     """
-    def fix(d: dict[str, Any]) -> dict[str, Any]:
-        d = dict(d)
-        if (
-            d.get(CONF_CLOUD_HOST) == DEFAULT_CLOUD_HOST
-            and not d.get(CONF_CLOUD_TLS, False)
-            and int(d.get(CONF_CLOUD_PORT, LEGACY_CLOUD_PORT)) == LEGACY_CLOUD_PORT
-        ):
-            d[CONF_CLOUD_PORT] = DEFAULT_CLOUD_PORT
-            d[CONF_CLOUD_TLS] = True
-        return d
-
-    new_data, new_opts = fix(entry.data), fix(entry.options) if CONF_CLOUD_HOST in entry.options else dict(entry.options)
+    # Options may override only port/TLS or host. Decide using the effective
+    # config, not each mapping separately, to preserve custom broker choices.
+    effective = {**entry.data, **entry.options}
+    if (
+        effective.get(CONF_CLOUD_HOST) != DEFAULT_CLOUD_HOST
+        or str(effective.get(CONF_CLOUD_PORT, LEGACY_CLOUD_PORT)) != str(LEGACY_CLOUD_PORT)
+    ):
+        return
+    new_data, new_opts = dict(entry.data), dict(entry.options)
+    for key, value in ((CONF_CLOUD_PORT, DEFAULT_CLOUD_PORT), (CONF_CLOUD_TLS, True)):
+        new_data[key] = value
+        if key in new_opts:
+            new_opts[key] = value
     if new_data != dict(entry.data) or new_opts != dict(entry.options):
         _LOGGER.warning(
-            "Sentinel Link: upgrading the Tez cloud connection from plaintext (1883) to TLS (8883)"
+            "Sentinel Link: repairing the Tez cloud connection from port 1883 to TLS (8883)"
         )
         hass.config_entries.async_update_entry(entry, data=new_data, options=new_opts)
 
