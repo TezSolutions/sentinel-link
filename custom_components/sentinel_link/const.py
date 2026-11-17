@@ -152,10 +152,13 @@ TOPIC_LOCAL_GEOIP_DISCOVERY = "homeassistant/sensor/{node_id}_geoip/config"
 # Reboot schedule
 # ---------------------------------------------------------------------------
 CONF_REBOOT_ENABLED = "reboot_enabled"
-CONF_REBOOT_TIME = "reboot_time"  # daily time in HH:MM local format
+CONF_REBOOT_TIME = "reboot_time"  # time in HH:MM local format
+# "daily" (default, also used when the key is absent) or mon/tue/wed/thu/fri/sat/sun
+CONF_REBOOT_WEEKDAY = "reboot_weekday"
 
 DEFAULT_REBOOT_ENABLED = False
 DEFAULT_REBOOT_TIME = "03:00"
+DEFAULT_REBOOT_WEEKDAY = "daily"
 
 TOPIC_CLOUD_REBOOT = "sentinel-link/{node_id}/reboot"
 

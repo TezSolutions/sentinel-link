@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -36,6 +36,7 @@ from .const import (
     CONF_MODEL,
     CONF_REBOOT_ENABLED,
     CONF_REBOOT_TIME,
+    CONF_REBOOT_WEEKDAY,
     CONF_SCRIPT_ID,
     CONF_SCRIPT_NAME,
     CONF_SCRIPT_TYPE,
@@ -45,12 +46,14 @@ from .const import (
     DEFAULT_DISK_MOUNTS,
     DEFAULT_REBOOT_ENABLED,
     DEFAULT_REBOOT_TIME,
+    DEFAULT_REBOOT_WEEKDAY,
     DOMAIN,
     MANUFACTURER,
     SCRIPT_TYPE_SENSOR,
     TEMP_SENSOR_LABELS,
 )
 from .coordinator import SentinelCoordinator
+from .reboot_schedule import next_reboot_local
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -547,7 +550,7 @@ class SentinelPublicIpSensor(_SystemSensorBase):
 class SentinelNextRebootSensor(_SystemSensorBase):
     """Sensor showing the next scheduled reboot time.
 
-    Reads ``reboot_enabled`` and ``reboot_time`` from the config entry
+    Reads ``reboot_enabled``, ``reboot_time`` and ``reboot_weekday`` from the config entry
     options and computes the next occurrence in the local time zone.
     Shows ``"Disabled"`` when the schedule is off.
     """
@@ -587,13 +590,12 @@ class SentinelNextRebootSensor(_SystemSensorBase):
             CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME
         )
         try:
-            hour, minute = map(int, reboot_time_str.split(":"))
-            local_now = dt_util.as_local(dt_util.utcnow())
-            target_local = local_now.replace(
-                hour=hour, minute=minute, second=0, microsecond=0
+            target_local = next_reboot_local(
+                dt_util.utcnow(),
+                dt_util.get_default_time_zone(),
+                reboot_time_str,
+                self._options.get(CONF_REBOOT_WEEKDAY, DEFAULT_REBOOT_WEEKDAY),
             )
-            if target_local <= local_now:
-                target_local += timedelta(days=1)
             return target_local.strftime("%Y-%m-%d %H:%M:%S")
         except (ValueError, TypeError):
             return "Invalid"
@@ -607,5 +609,8 @@ class SentinelNextRebootSensor(_SystemSensorBase):
             "reboot_enabled": enabled,
             "reboot_time": self._options.get(
                 CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME
+            ),
+            "reboot_weekday": self._options.get(
+                CONF_REBOOT_WEEKDAY, DEFAULT_REBOOT_WEEKDAY
             ),
         }

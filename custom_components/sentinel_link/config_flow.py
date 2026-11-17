@@ -22,6 +22,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .api.setup import CONF_API_ENABLED, DEFAULT_API_ENABLED
+from .reboot_schedule import WEEKDAY_DAILY, WEEKDAY_NAMES, parse_reboot_time
 from .const import (
     BUNDLED_VIGI_ALARM,
     CONF_AREA,
@@ -50,6 +51,7 @@ from .const import (
     CONF_POLL_INTERVAL,
     CONF_REBOOT_ENABLED,
     CONF_REBOOT_TIME,
+    CONF_REBOOT_WEEKDAY,
     CONF_SCRIPT_CONTROL,
     CONF_SCRIPT_ID,
     CONF_SCRIPT_NAME,
@@ -76,6 +78,7 @@ from .const import (
     DEFAULT_POLL_INTERVAL,
     DEFAULT_REBOOT_ENABLED,
     DEFAULT_REBOOT_TIME,
+    DEFAULT_REBOOT_WEEKDAY,
     DEFAULT_SCRIPT_CONTROL,
     DEFAULT_STATUS_ARG,
     DEFAULT_SYSTEM_METRICS,
@@ -462,43 +465,72 @@ class SentinelLinkOptionsFlow(config_entries.OptionsFlow):
     async def async_step_reboot(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Configure the daily device reboot schedule."""
+        """Configure the device reboot schedule (daily or one weekday)."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self._options.update(
-                {
-                    CONF_REBOOT_ENABLED: user_input.get(
-                        CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED
-                    ),
-                    CONF_REBOOT_TIME: user_input.get(
-                        CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME
-                    ),
-                }
-            )
-            # Commit the options immediately — the reboot sub-step saves on
-            # its own submit instead of looping back to the script manager
-            # (which previously discarded the changes unless the user then
-            # walked through Feature Settings and submitted again).
-            return self.async_create_entry(title="", data=self._options)
+            reboot_time = str(
+                user_input.get(CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME)
+            ).strip()
+            try:
+                hour, minute = parse_reboot_time(reboot_time)
+            except ValueError:
+                errors[CONF_REBOOT_TIME] = "invalid_reboot_time"
+            if not errors:
+                self._options.update(
+                    {
+                        CONF_REBOOT_ENABLED: user_input.get(
+                            CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED
+                        ),
+                        CONF_REBOOT_TIME: f"{hour:02d}:{minute:02d}",
+                        CONF_REBOOT_WEEKDAY: user_input.get(
+                            CONF_REBOOT_WEEKDAY, DEFAULT_REBOOT_WEEKDAY
+                        ),
+                    }
+                )
+                # Commit the options immediately — the reboot sub-step saves on
+                # its own submit instead of looping back to the script manager
+                # (which previously discarded the changes unless the user then
+                # walked through Feature Settings and submitted again).
+                return self.async_create_entry(title="", data=self._options)
 
+        current = user_input or self._options
+        weekday_options = [
+            SelectOptionDict(value=WEEKDAY_DAILY, label="Every day"),
+            *(
+                SelectOptionDict(value=key, label=name)
+                for key, name in WEEKDAY_NAMES.items()
+            ),
+        ]
         schema = vol.Schema(
             {
                 vol.Optional(
                     CONF_REBOOT_ENABLED,
-                    default=self._options.get(CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED),
+                    default=current.get(CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED),
                 ): bool,
                 vol.Optional(
+                    CONF_REBOOT_WEEKDAY,
+                    default=current.get(CONF_REBOOT_WEEKDAY, DEFAULT_REBOOT_WEEKDAY),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=weekday_options,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
                     CONF_REBOOT_TIME,
-                    default=self._options.get(CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME),
+                    default=current.get(CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME),
                 ): str,
             }
         )
         return self.async_show_form(
             step_id="reboot",
             data_schema=schema,
+            errors=errors,
             description_placeholders={
                 "reboot_note": (
-                    "Enables a daily reboot of the WHOLE device (host) at the "
-                    "given time in your local timezone. Format: HH:MM (24h)."
+                    "Reboots the WHOLE device (host) every day, or once a week "
+                    "on the chosen weekday, at the given time in your local "
+                    "timezone. Format: HH:MM (24h)."
                 )
             },
         )

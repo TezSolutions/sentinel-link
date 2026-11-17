@@ -28,6 +28,7 @@ from .const import (
     CONF_NOTIFICATION_FORWARD,
     CONF_REBOOT_ENABLED,
     CONF_REBOOT_TIME,
+    CONF_REBOOT_WEEKDAY,
     CONF_SCRIPT_CONTROL,
     CONF_SCRIPTS,
     CONF_SYSTEM_METRICS,
@@ -41,6 +42,7 @@ from .const import (
     DEFAULT_NOTIFICATION_FORWARD,
     DEFAULT_REBOOT_ENABLED,
     DEFAULT_REBOOT_TIME,
+    DEFAULT_REBOOT_WEEKDAY,
     DOMAIN,
     HEARTBEAT_INTERVAL,
     PLATFORMS,
@@ -50,6 +52,7 @@ from .const import (
 )
 from .api.setup import async_setup_api, async_unload_api
 from .coordinator import SentinelCoordinator
+from .reboot_schedule import describe_schedule, next_reboot_local, parse_reboot_time, parse_weekday
 from .mqtt_local import SentinelMqttLocal
 
 _LOGGER = logging.getLogger(__name__)
@@ -138,45 +141,47 @@ async def _async_execute_reboot(
     await hass.async_add_executor_job(_sync_reboot)
 
 
-def _calculate_next_reboot(reboot_time_str: str) -> datetime:
-    """Calculate the next UTC datetime for a daily HH:MM reboot time.
+def _calculate_next_reboot(
+    reboot_time_str: str, reboot_weekday: str | None = DEFAULT_REBOOT_WEEKDAY
+) -> datetime:
+    """Next UTC datetime for the HH:MM reboot, daily or on one weekday.
 
-    The *reboot_time_str* is in the HA-configured local time zone.
+    *reboot_time_str* and the weekday are evaluated in the HA-configured
+    local time zone (see ``reboot_schedule.next_reboot_local``).
     """
-    hour, minute = map(int, reboot_time_str.split(":"))
-    local_now = dt_util.as_local(dt_util.utcnow())
-    target_local = local_now.replace(
-        hour=hour, minute=minute, second=0, microsecond=0
+    local = next_reboot_local(
+        dt_util.utcnow(), dt_util.get_default_time_zone(), reboot_time_str, reboot_weekday
     )
-    if target_local <= local_now:
-        target_local += timedelta(days=1)
-    return dt_util.as_utc(target_local)
+    return dt_util.as_utc(local)
 
 
 @callback
-def _schedule_daily_reboot(
+def _schedule_reboot(
     hass: HomeAssistant,
     reboot_time_str: str,
+    reboot_weekday: str | None,
     cloud_client: Any,
     node_id: str,
 ) -> Any:
-    """Schedule the next daily reboot and return the unsub callback.
+    """Schedule the next daily/weekly reboot and return the unsub callback.
 
     Uses ``async_track_point_in_utc_time`` — fires once. The callback
-    re-schedules itself for the following day so a single missed reboot
-    (e.g. because HA was offline) retries the next day.
+    re-schedules itself for the next slot (tomorrow, or the same weekday next
+    week) so a single missed reboot retries at the next slot.
     """
+    label = describe_schedule(reboot_weekday)
 
     async def _reboot_callback(now: datetime) -> None:
-        """Fire the reboot and reschedule for the next day."""
+        """Fire the reboot and reschedule for the next slot."""
         _LOGGER.warning(
-            "Sentinel Link: scheduled daily reboot triggered at %s",
-            dt_util.as_local(now).strftime("%H:%M:%S"),
+            "Sentinel Link: scheduled %s reboot triggered at %s",
+            label,
+            dt_util.as_local(now).strftime("%a %H:%M:%S"),
         )
         await _async_execute_reboot(hass, cloud_client, node_id)
 
-        # If we're still running (reboot failed or is deferred), schedule next day
-        next_dt = _calculate_next_reboot(reboot_time_str)
+        # If we're still running (reboot failed or is deferred), schedule next slot
+        next_dt = _calculate_next_reboot(reboot_time_str, reboot_weekday)
         # But only if the integration is still loaded
         if hass.is_running:
             new_unsub = async_track_point_in_utc_time(
@@ -190,11 +195,12 @@ def _schedule_daily_reboot(
                         old()
                     runtime[DATA_UNSUB_REBOOT] = new_unsub
 
-    next_dt = _calculate_next_reboot(reboot_time_str)
+    next_dt = _calculate_next_reboot(reboot_time_str, reboot_weekday)
     _LOGGER.info(
-        "Sentinel Link: next reboot scheduled at %s (local %s)",
+        "Sentinel Link: next %s reboot scheduled at %s (local %s)",
+        label,
         next_dt.isoformat(),
-        dt_util.as_local(next_dt).strftime("%Y-%m-%d %H:%M:%S"),
+        dt_util.as_local(next_dt).strftime("%a %Y-%m-%d %H:%M:%S"),
     )
     return async_track_point_in_utc_time(hass, _reboot_callback, next_dt)
 
@@ -385,20 +391,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(DOMAIN, SERVICE_REBOOT_NOW, _handle_reboot_now)
 
     # ------------------------------------------------------------------
-    # 7c. Schedule daily reboot if enabled
+    # 7c. Schedule daily/weekly reboot if enabled
     # ------------------------------------------------------------------
     reboot_enabled: bool = cfg.get(CONF_REBOOT_ENABLED, DEFAULT_REBOOT_ENABLED)
     unsub_reboot: Any = None
 
     if reboot_enabled:
         reboot_time_str: str = cfg.get(CONF_REBOOT_TIME, DEFAULT_REBOOT_TIME)
-        unsub_reboot = _schedule_daily_reboot(
-            hass, reboot_time_str, cloud_client, node_id
-        )
-        _LOGGER.info(
-            "Sentinel Link: daily reboot scheduled at %s",
-            reboot_time_str,
-        )
+        reboot_weekday: str = cfg.get(CONF_REBOOT_WEEKDAY, DEFAULT_REBOOT_WEEKDAY)
+        try:
+            parse_reboot_time(reboot_time_str)
+            parse_weekday(reboot_weekday)
+        except ValueError as exc:
+            # Never fall back to a different (e.g. daily) schedule on bad input.
+            _LOGGER.error("Sentinel Link: scheduled reboot NOT set: %s", exc)
+        else:
+            unsub_reboot = _schedule_reboot(
+                hass, reboot_time_str, reboot_weekday, cloud_client, node_id
+            )
+            _LOGGER.info(
+                "Sentinel Link: %s reboot scheduled at %s",
+                describe_schedule(reboot_weekday),
+                reboot_time_str,
+            )
     hass.data[DOMAIN][entry.entry_id][DATA_UNSUB_REBOOT] = unsub_reboot
 
     # ------------------------------------------------------------------

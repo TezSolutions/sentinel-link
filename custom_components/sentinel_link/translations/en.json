@@ -123,12 +123,27 @@
           "manufacturer": "Manufacturer",
           "model": "Model"
         }
+      },
+      "reboot": {
+        "title": "Reboot Schedule",
+        "description": "{reboot_note}",
+        "data": {
+          "reboot_enabled": "Scheduled reboot",
+          "reboot_weekday": "Day",
+          "reboot_time": "Time (HH:MM, 24h)"
+        },
+        "data_description": {
+          "reboot_enabled": "Reboot the whole device on a schedule.",
+          "reboot_weekday": "Every day, or once a week on this day.",
+          "reboot_time": "Local time of the reboot, in the hub's configured time zone."
+        }
       }
     },
     "error": {
       "script_id_required": "Script ID is required.",
       "script_id_invalid": "Script ID must contain only letters, numbers, underscores, or hyphens.",
-      "script_id_duplicate": "A script with this ID already exists."
+      "script_id_duplicate": "A script with this ID already exists.",
+      "invalid_reboot_time": "Time must be HH:MM in 24-hour format, e.g. 03:00."
     }
   },
   "entity": {
